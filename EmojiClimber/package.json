@@ -1,0 +1,17 @@
+{
+    "name": "emoji-climber",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "main.js",
+    "scripts": {
+        "dev": "vite --port 5174",
+        "build": "vite build"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": "ゲキムズ物理絵文字アクション - Getting Over It inspired emoji platformer",
+    "devDependencies": {
+        "vite": "^7.3.1"
+    }
+}

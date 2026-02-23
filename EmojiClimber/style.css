@@ -1,0 +1,93 @@
+/* ── Emoji Climber — ダークテーマUI ── */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: #0a0a1a;
+    color: #e0e0e0;
+    font-family: 'Outfit', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+#game-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.game-title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: 6px;
+    background: linear-gradient(135deg, #ffeb3b, #ff9800, #f44336);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    filter: drop-shadow(0 0 20px rgba(255, 152, 0, 0.3));
+}
+
+.game-subtitle {
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-weight: 300;
+    letter-spacing: 2px;
+}
+
+#game-container {
+    position: relative;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow:
+        0 0 30px rgba(0, 0, 0, 0.5),
+        0 0 60px rgba(255, 152, 0, 0.1),
+        inset 0 0 30px rgba(0, 0, 0, 0.2);
+}
+
+#gameCanvas {
+    display: block;
+    background: #1a1a2e;
+}
+
+.controls-hint {
+    display: flex;
+    gap: 24px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.35);
+    letter-spacing: 1px;
+}
+
+.controls-hint span {
+    padding: 4px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── レスポンシブ ── */
+@media (max-width: 850px) {
+    .game-title {
+        font-size: 1.6rem;
+        letter-spacing: 3px;
+    }
+
+    .game-subtitle {
+        font-size: 0.8rem;
+    }
+
+    .controls-hint {
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+}
