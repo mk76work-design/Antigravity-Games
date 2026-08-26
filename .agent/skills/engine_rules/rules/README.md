@@ -41,6 +41,7 @@ rules/
 | ファイル | 対象技術 | 概要 |
 |---------|---------|------|
 | `web_game_rules.md` | HTML5/Canvas/WebGL | Webゲーム開発の基本ルール |
+| `godot_rules.md` | Godot 4.3 (GDScript) | ロジック/ビュー分離、ヘッドレステスト（GUT）中心の開発ルール |
 
 ---
 
