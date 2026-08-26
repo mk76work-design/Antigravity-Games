@@ -1,0 +1,20 @@
+{
+    "name": "pixel-animator",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "main.js",
+    "scripts": {
+        "dev": "vite --port 5175",
+        "build": "vite build"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": "AIエージェントに高品質なドット絵アニメーションを描かせるツール",
+    "dependencies": {
+        "gifenc": "^1.0.3"
+    },
+    "devDependencies": {
+        "vite": "^7.3.1"
+    }
+}

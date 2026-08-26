@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Animator — AIエージェント・ドット絵アニメーションスタジオ</title>
+    <meta name="description" content="プロンプトを渡すとAIエージェントが高品質なドット絵アニメーションを描き、その場で編集・書き出しできるスタジオツール。">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <header class="app-header">
+            <h1 class="app-title">PIXEL ANIMATOR</h1>
+            <p class="app-subtitle">AIエージェントにドット絵アニメーションを描かせる</p>
+            <button id="settingsBtn" class="icon-btn" title="APIキー設定">⚙ 設定</button>
+        </header>
+
+        <main class="app-main">
+            <section class="panel panel-prompt">
+                <h2 class="panel-title">1. 発注する</h2>
+
+                <label class="field-label" for="promptInput">どんなアニメーションが欲しい？</label>
+                <textarea id="promptInput" rows="4" placeholder="例: 剣を構えた侍が待機して、時々まばたきする。青系の色合いで、シルエットがはっきりわかるように。"></textarea>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label class="field-label" for="sizeSelect">キャンバスサイズ</label>
+                        <select id="sizeSelect">
+                            <option value="16">16 × 16</option>
+                            <option value="24" selected>24 × 24</option>
+                            <option value="32">32 × 32</option>
+                            <option value="48">48 × 48</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="frameCountInput">フレーム数</label>
+                        <input id="frameCountInput" type="number" min="2" max="16" value="6">
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label class="field-label" for="paletteSizeInput">パレット上限色数</label>
+                        <input id="paletteSizeInput" type="number" min="2" max="32" value="12">
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="loopSelect">ループ種類</label>
+                        <select id="loopSelect">
+                            <option value="loop" selected>ループ</option>
+                            <option value="pingpong">往復</option>
+                            <option value="once">1回のみ</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button id="generateBtn" class="primary-btn">🪄 AIエージェントに描かせる</button>
+                <p id="statusLine" class="status-line" role="status" aria-live="polite"></p>
+            </section>
+
+            <section class="panel panel-stage">
+                <h2 class="panel-title">2. プレビュー &amp; 編集</h2>
+
+                <div class="stage-toolbar">
+                    <div class="tool-group" id="toolGroup">
+                        <button class="tool-btn active" data-tool="pencil" title="ペンシル">✏</button>
+                        <button class="tool-btn" data-tool="eraser" title="消しゴム">▢</button>
+                        <button class="tool-btn" data-tool="eyedropper" title="スポイト">💧</button>
+                        <button class="tool-btn" data-tool="bucket" title="バケツ">🪣</button>
+                    </div>
+                    <div class="tool-group">
+                        <button id="undoBtn" class="tool-btn" title="元に戻す">↶</button>
+                        <button id="redoBtn" class="tool-btn" title="やり直す">↷</button>
+                    </div>
+                    <div class="tool-group">
+                        <label class="zoom-label">ズーム</label>
+                        <input id="zoomRange" type="range" min="4" max="32" value="16">
+                    </div>
+                </div>
+
+                <div class="stage-body">
+                    <canvas id="editCanvas" width="640" height="640"></canvas>
+                    <div id="paletteStrip" class="palette-strip"></div>
+                </div>
+
+                <div class="playback-bar">
+                    <button id="playBtn" class="icon-btn" title="再生 / 一時停止">▶</button>
+                    <label class="fps-label">FPS <input id="fpsRange" type="range" min="1" max="24" value="8"><span id="fpsValue">8</span></label>
+                    <canvas id="playCanvas" width="128" height="128"></canvas>
+                </div>
+            </section>
+
+            <section class="panel panel-frames">
+                <h2 class="panel-title">3. フレーム &amp; 書き出し</h2>
+                <div id="frameStrip" class="frame-strip"></div>
+                <div class="frame-actions">
+                    <button id="dupFrameBtn" class="secondary-btn">フレーム複製</button>
+                    <button id="delFrameBtn" class="secondary-btn">フレーム削除</button>
+                    <button id="regenFrameBtn" class="secondary-btn">このフレームだけ再生成</button>
+                </div>
+                <div class="export-actions">
+                    <button id="exportPngBtn" class="secondary-btn">📄 スプライトシート PNG</button>
+                    <button id="exportGifBtn" class="secondary-btn">🎞 アニメーション GIF</button>
+                    <button id="exportJsonBtn" class="secondary-btn">💾 プロジェクト JSON</button>
+                    <label class="secondary-btn file-btn">📂 JSON 読み込み
+                        <input id="importJsonInput" type="file" accept="application/json" hidden>
+                    </label>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <dialog id="settingsDialog">
+        <form method="dialog" id="settingsForm">
+            <h2>API 設定</h2>
+            <p class="settings-hint">Anthropic API キーはこの端末の localStorage にのみ保存され、Anthropic API 以外には送信されません。</p>
+            <label class="field-label" for="apiKeyInput">Anthropic API キー</label>
+            <input id="apiKeyInput" type="password" placeholder="sk-ant-...">
+            <label class="field-label" for="modelInput">モデル</label>
+            <input id="modelInput" type="text" placeholder="claude-sonnet-5" value="claude-sonnet-5">
+            <div class="dialog-actions">
+                <button id="clearKeyBtn" type="button" class="secondary-btn">キーを削除</button>
+                <button type="submit" class="primary-btn">保存して閉じる</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script type="module" src="main.js"></script>
+</body>
+
+</html>
