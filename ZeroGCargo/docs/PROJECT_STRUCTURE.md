@@ -28,6 +28,7 @@ ZeroGCargo/
 │   └── unit/
 │       ├── test_cargo_board_move.gd
 │       ├── test_cargo_board_push.gd
+│       ├── test_cargo_board_height.gd
 │       └── test_cargo_board_win_condition.gd
 ├── addons/
 │   └── gut/                   # GUT (Godot Unit Test) 9.3.0, GitHubより導入
@@ -44,7 +45,7 @@ ZeroGCargo/
 
 | 拡張子 | ファイル数 | 合計行数 | 備考 |
 |--------|----------|---------|------|
-| .gd | 11 | 873 | 全ファイル300行以内 |
+| .gd | 12 | 1007 | 全ファイル300行以内 |
 | .tscn | 1 | 6 | Main.tscn（最小構成、ノードはコードで構築） |
 | .godot | 1 | - | project.godot |
 
@@ -54,17 +55,18 @@ ZeroGCargo/
 
 | パス | 行数 | 責務 |
 |------|------|------|
-| `scripts/core/cargo_board.gd` | 90 | 盤面ロジック本体（RefCounted） |
-| `scripts/core/level_data.gd` | 59 | 5レベル分のレイアウト定義 |
+| `scripts/core/cargo_board.gd` | 108 | 盤面ロジック本体（RefCounted）。高さ(段差)による移動・押し出し制約を含む |
+| `scripts/core/level_data.gd` | 68 | 6レベル分のレイアウト定義（Lv6は高低差ギミック） |
 | `scripts/nodes/main.gd` | 113 | エントリポイント、カメラ/環境光(プロシージャルスカイ)/結線、画面振動 |
-| `scripts/nodes/board_view_3d.gd` | 174 | 盤面状態とTweenアニメーションの橋渡し（見た目はprimitive_shapes.gdに委譲） |
+| `scripts/nodes/board_view_3d.gd` | 221 | 盤面状態とTweenアニメーションの橋渡し（見た目はprimitive_shapes.gdに委譲）。高さに応じた床の配置と段差ライザーの生成を含む |
 | `scripts/nodes/primitive_shapes.gd` | 121 | 壁・床・目標・カーゴ・プレイヤーの複合プリミティブ生成ファクトリ |
 | `scripts/nodes/player_controller.gd` | 48 | 入力受付 |
 | `scripts/nodes/hud.gd` | 71 | UI表示（半透明パネル、CLEARポップ演出） |
 | `scripts/autoload/game_manager.gd` | 36 | レベル進行管理（Autoload） |
 | `tests/unit/test_cargo_board_move.gd` | 35 | 移動ロジックのGUTテスト |
 | `tests/unit/test_cargo_board_push.gd` | 50 | 押し出しロジックのGUTテスト |
-| `tests/unit/test_cargo_board_win_condition.gd` | 76 | クリア判定・全レベル可解性のGUTテスト |
+| `tests/unit/test_cargo_board_height.gd` | 59 | 高さ(段差)の移動・押し出し制約のGUTテスト |
+| `tests/unit/test_cargo_board_win_condition.gd` | 77 | クリア判定・全6レベル可解性のGUTテスト |
 
 ---
 

@@ -14,6 +14,8 @@ const CELL_SIZE := 1.0
 const WALL_HEIGHT := 1.0
 const FLOOR_HEIGHT := 0.1
 const FLOOR_TOP := FLOOR_HEIGHT * 1.4  # ベース+インセットパネル分を含めた床の実際の高さ
+const HEIGHT_STEP := 0.4  # CargoBoardの高さ1段あたりのワールドY方向の距離
+const RISER_THICKNESS := 0.08
 const BOX_SIZE := 0.8
 const TARGET_SIZE := 0.55
 const TARGET_HEIGHT := 0.08
@@ -33,6 +35,7 @@ const COLOR_BOX := Color(1.0, 0.55, 0.1)
 const COLOR_BOX_ON_TARGET := Color(0.25, 0.85, 0.35)
 const COLOR_TARGET := Color(0.2, 0.75, 0.4)
 const COLOR_PLAYER := Color(0.2, 0.55, 1.0)
+const COLOR_RISER := Color(0.15, 0.15, 0.19)
 
 var _static_root: Node3D = null
 var _player_mesh: Node3D = null
@@ -59,24 +62,26 @@ func load_level(board: CargoBoard) -> void:
 				var base_color: Color = COLOR_FLOOR_A if is_a else COLOR_FLOOR_B
 				var inset_color: Color = COLOR_FLOOR_A_INSET if is_a else COLOR_FLOOR_B_INSET
 				var floor_tile := PrimitiveShapes.make_floor(CELL_SIZE, FLOOR_HEIGHT, base_color, inset_color)
-				floor_tile.position = _grid_to_world(pos, 0.0)
+				floor_tile.position = _grid_to_world(pos, _elevation(board, pos))
 				_static_root.add_child(floor_tile)
 
+	_add_elevation_risers(board)
+
 	for target_pos in board.get_target_positions():
-		_add_target_marker(target_pos)
+		_add_target_marker(board, target_pos)
 
 	for box_pos in board.get_box_positions():
 		var color: Color = COLOR_BOX_ON_TARGET if board.is_target(box_pos) else COLOR_BOX
 		var built: Dictionary = PrimitiveShapes.make_cargo_crate(BOX_SIZE, color)
 		var root: Node3D = built["root"]
-		root.position = _grid_to_world(box_pos, FLOOR_TOP)
+		root.position = _grid_to_world(box_pos, FLOOR_TOP + _elevation(board, box_pos))
 		root.set_meta("primary_mesh", built["primary_mesh"])
 		add_child(root)
 		_box_meshes[box_pos] = root
 
 	_player_grid_pos = board.get_player_position()
 	_player_mesh = PrimitiveShapes.make_player_robot(PLAYER_SIZE, COLOR_PLAYER)
-	_player_mesh.position = _grid_to_world(_player_grid_pos, FLOOR_TOP)
+	_player_mesh.position = _grid_to_world(_player_grid_pos, FLOOR_TOP + _elevation(board, _player_grid_pos))
 	add_child(_player_mesh)
 
 
@@ -87,7 +92,7 @@ func sync(board: CargoBoard) -> void:
 		var delta: Vector2i = new_player_pos - _player_grid_pos
 		_player_mesh.look_at(_player_mesh.global_position + Vector3(delta.x, 0.0, delta.y), Vector3.UP)
 		_player_grid_pos = new_player_pos
-		_tween_to(_player_mesh, _grid_to_world(new_player_pos, FLOOR_TOP))
+		_tween_to(_player_mesh, _grid_to_world(new_player_pos, FLOOR_TOP + _elevation(board, new_player_pos)))
 
 	var new_box_positions: Array = board.get_box_positions()
 	var new_box_set: Dictionary = {}
@@ -107,7 +112,7 @@ func sync(board: CargoBoard) -> void:
 		var root: Node3D = _box_meshes[moved_from]
 		_box_meshes.erase(moved_from)
 		_box_meshes[moved_to] = root
-		_tween_box_move(root, _grid_to_world(moved_to, FLOOR_TOP))
+		_tween_box_move(root, _grid_to_world(moved_to, FLOOR_TOP + _elevation(board, moved_to)))
 		var landed_on_target: bool = board.is_target(moved_to)
 		_set_box_color(root, COLOR_BOX_ON_TARGET if landed_on_target else COLOR_BOX)
 		if landed_on_target:
@@ -155,12 +160,54 @@ func _grid_to_world(pos: Vector2i, height_y: float) -> Vector3:
 	return Vector3(pos.x * CELL_SIZE, height_y, pos.y * CELL_SIZE)
 
 
+## 指定マスの高さ（段差）をワールドY座標のオフセットに変換する。
+func _elevation(board: CargoBoard, pos: Vector2i) -> float:
+	return board.get_height(pos) * HEIGHT_STEP
+
+
+## 高さの異なる床が隣接する境界に、段差の側面を埋めるライザーを配置する。
+## 各セルはRIGHT/DOWNの2方向だけを調べることで、同じ境界を二重に処理しない。
+func _add_elevation_risers(board: CargoBoard) -> void:
+	for y in board.height:
+		for x in board.width:
+			var pos := Vector2i(x, y)
+			if board.is_wall(pos):
+				continue
+			_add_riser_if_needed(board, pos, Vector2i(1, 0))
+			_add_riser_if_needed(board, pos, Vector2i(0, 1))
+
+
+func _add_riser_if_needed(board: CargoBoard, pos: Vector2i, direction: Vector2i) -> void:
+	var neighbor: Vector2i = pos + direction
+	if neighbor.x < 0 or neighbor.x >= board.width or neighbor.y < 0 or neighbor.y >= board.height:
+		return
+	if board.is_wall(neighbor):
+		return
+	var elevation_a: float = _elevation(board, pos)
+	var elevation_b: float = _elevation(board, neighbor)
+	if is_equal_approx(elevation_a, elevation_b):
+		return
+
+	var low: float = min(elevation_a, elevation_b)
+	var high: float = max(elevation_a, elevation_b)
+	var edge_center: Vector3 = (_grid_to_world(pos, 0.0) + _grid_to_world(neighbor, 0.0)) * 0.5
+	edge_center.y = (low + high) * 0.5
+
+	var size: Vector3
+	if direction.x != 0:
+		size = Vector3(RISER_THICKNESS, high - low, CELL_SIZE)
+	else:
+		size = Vector3(CELL_SIZE, high - low, RISER_THICKNESS)
+
+	_static_root.add_child(PrimitiveShapes.make_box(size, COLOR_RISER, edge_center))
+
+
 ## 目標パッドを生成し、明るさをループで上下させるパルス発光を付与する（F-2: 判定の強調）。
-func _add_target_marker(target_pos: Vector2i) -> void:
+func _add_target_marker(board: CargoBoard, target_pos: Vector2i) -> void:
 	var built: Dictionary = PrimitiveShapes.make_target_pad(TARGET_SIZE, TARGET_HEIGHT, COLOR_TARGET)
 	var root: Node3D = built["root"]
 	var primary_mesh: MeshInstance3D = built["primary_mesh"]
-	root.position = _grid_to_world(target_pos, FLOOR_TOP)
+	root.position = _grid_to_world(target_pos, FLOOR_TOP + _elevation(board, target_pos))
 	_static_root.add_child(root)
 
 	var box_mesh: BoxMesh = primary_mesh.mesh

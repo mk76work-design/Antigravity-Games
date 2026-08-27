@@ -1,6 +1,6 @@
 extends GutTest
 
-## CargoBoard: クリア判定、および全5レベルの解手順による可解性検証。
+## CargoBoard: クリア判定、および全6レベルの解手順による可解性検証。
 ## 各レベルの手順は Python製BFSソルバーで事前に機械検証済みの最短解を用いる。
 
 ## プレイヤー(1,1) -> カーゴ(1,2) -> 目標(1,3) が縦一列に並ぶレイアウト。
@@ -29,6 +29,7 @@ var LEVEL_SOLUTIONS: Array[PackedStringArray] = [
 	["RIGHT", "DOWN", "UP", "RIGHT", "RIGHT", "DOWN"],
 	["RIGHT", "DOWN", "UP", "RIGHT", "RIGHT", "DOWN", "LEFT", "DOWN", "DOWN"],
 	["RIGHT", "DOWN", "UP", "RIGHT", "DOWN", "UP", "RIGHT", "DOWN"],
+	["RIGHT", "RIGHT", "RIGHT", "DOWN"],
 ]
 
 

@@ -7,21 +7,23 @@
 
 ## `scripts/core/cargo_board.gd` — `class_name CargoBoard extends RefCounted`
 Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=行）。
+床は「高さ（段差）」を持てる: プレイヤーは1段差までなら昇り降り可能、カーゴは同じ高さの床同士でしか押し出せない。
 
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
 | 定数 | `UP/DOWN/LEFT/RIGHT: Vector2i` | 移動方向 |
-| `from_layout` | `static (layout: PackedStringArray) -> CargoBoard` | ASCIIレイアウトから盤面を構築 |
+| `from_layout` | `static (layout: PackedStringArray) -> CargoBoard` | ASCIIレイアウトから盤面を構築（`'1'`〜`'9'`は床の高さ） |
 | `is_wall` / `is_box` / `is_target` | `(pos: Vector2i) -> bool` | セル種別判定 |
+| `get_height` | `(pos: Vector2i) -> int` | 指定マスの高さ（未指定なら0） |
 | `get_player_position` | `() -> Vector2i` | |
 | `get_box_positions` / `get_target_positions` | `() -> Array` | |
-| `move` | `(direction: Vector2i) -> bool` | 移動・押し出しを試行。成功時true |
+| `move` | `(direction: Vector2i) -> bool` | 移動・押し出しを試行（高さ制約含む）。成功時true |
 | `is_cleared` | `() -> bool` | 全カーゴが目標パッド上か |
 
 ## `scripts/core/level_data.gd` — `class_name LevelData extends RefCounted`
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
-| `LEVELS` | `static var Array[PackedStringArray]` | 5レベル分のレイアウト（`const`にすると4.3のエンジン不具合でクラッシュするため`static var`） |
+| `LEVELS` | `static var Array[PackedStringArray]` | 6レベル分のレイアウト（Lv6は高低差ギミック）。`const`にすると4.3のエンジン不具合でクラッシュするため`static var` |
 | `get_level_count` | `static () -> int` | |
 | `get_level` | `static (index: int) -> PackedStringArray` | |
 
@@ -40,8 +42,10 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
-| `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（チェッカー床・壁・発光目標・カーゴ・プレイヤー） |
+| `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（チェッカー床・壁・発光目標・カーゴ・プレイヤー・段差ライザー） |
 | `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新、着地時にスクイーズ演出。プレイヤーは移動方向へ`look_at`で向きを変える |
+| `_elevation` | `(board: CargoBoard, pos: Vector2i) -> float` | `CargoBoard.get_height()`をワールドY座標オフセットに変換（`HEIGHT_STEP`倍） |
+| `_add_elevation_risers` | `(board: CargoBoard) -> void` | 高さの異なる床が隣接する境界に段差の側面（ライザー）を配置 |
 | シグナル | `box_landed_on_target` | カーゴが目標パッドに乗った瞬間に発火（main.gdの画面振動トリガー） |
 
 ## `scripts/nodes/primitive_shapes.gd` — `class_name PrimitiveShapes extends RefCounted`
@@ -83,4 +87,5 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 |---------|-----------|
 | `test_cargo_board_move.gd` | 床への移動、壁での停止 |
 | `test_cargo_board_push.gd` | カーゴの押し出し、壁/別カーゴによる押し出し失敗 |
-| `test_cargo_board_win_condition.gd` | クリア判定、**全5レベルの検証済み手順によるクリア可能性** |
+| `test_cargo_board_height.gd` | 1段差の昇り降り、2段差以上の移動禁止、高さの異なる床へのカーゴ押し出し禁止 |
+| `test_cargo_board_win_condition.gd` | クリア判定、**全6レベルの検証済み手順によるクリア可能性**（Lv6は高低差ギミック） |
