@@ -43,7 +43,7 @@ ZeroGCargo/
 
 | 拡張子 | ファイル数 | 合計行数 | 備考 |
 |--------|----------|---------|------|
-| .gd | 10 | 580 | 全ファイル300行以内 |
+| .gd | 10 | 643 | 全ファイル300行以内 |
 | .tscn | 1 | 6 | Main.tscn（最小構成、ノードはコードで構築） |
 | .godot | 1 | - | project.godot |
 
@@ -56,7 +56,7 @@ ZeroGCargo/
 | `scripts/core/cargo_board.gd` | 90 | 盤面ロジック本体（RefCounted） |
 | `scripts/core/level_data.gd` | 59 | 5レベル分のレイアウト定義 |
 | `scripts/nodes/main.gd` | 71 | エントリポイント、カメラ/結線 |
-| `scripts/nodes/board_view_3d.gd` | 79 | 3Dプリミティブ表示 |
+| `scripts/nodes/board_view_3d.gd` | 142 | 3Dプリミティブ表示（静的構築+Tween差分更新） |
 | `scripts/nodes/player_controller.gd` | 48 | 入力受付 |
 | `scripts/nodes/hud.gd` | 36 | UI表示 |
 | `scripts/autoload/game_manager.gd` | 36 | レベル進行管理（Autoload） |

@@ -16,7 +16,7 @@ func setup(new_board: CargoBoard, new_view: BoardView3D) -> void:
 	board = new_board
 	view = new_view
 	move_count = 0
-	view.render(board)
+	view.load_level(board)
 	board_updated.emit(move_count)
 
 
@@ -42,7 +42,7 @@ func _try_move(direction: Vector2i) -> void:
 	if not moved:
 		return
 	move_count += 1
-	view.render(board)
+	view.sync(board)
 	board_updated.emit(move_count)
 	if board.is_cleared():
 		level_cleared.emit()

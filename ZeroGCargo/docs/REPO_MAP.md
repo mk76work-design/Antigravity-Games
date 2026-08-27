@@ -36,7 +36,8 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 ## `scripts/nodes/board_view_3d.gd` — `class_name BoardView3D extends Node3D`
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
-| `render` | `(board: CargoBoard) -> void` | 盤面全体を`MeshInstance3D`+`BoxMesh`で再構築 |
+| `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（床・壁・目標・カーゴ・プレイヤー） |
+| `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新 |
 
 ## `scripts/nodes/player_controller.gd` — `class_name PlayerController extends Node`
 | メンバ | シグネチャ | 説明 |
