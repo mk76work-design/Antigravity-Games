@@ -142,6 +142,48 @@ xvfb-run -a --server-args="-screen 0 1280x720x24" \
 
 ---
 
+---
+
+## 既知のエンジン不具合・環境固有の注意点（Zero-G Cargo開発で発見）
+
+### ⚠️ Godot 4.3: サイズの異なる要素を持つ `const Array[TypedArray]` リテラルはメモリ破損の恐れ
+```gdscript
+# ❌ 危険: 要素ごとに長さの異なる PackedStringArray を const の Array[PackedStringArray] に入れる
+const LEVEL_SOLUTIONS: Array[PackedStringArray] = [
+    ["DOWN"],
+    ["RIGHT", "RIGHT", "DOWN", "DOWN", "LEFT"],  # 長さが異なる
+]
+```
+- 実際に `Index p_index = 0 is out of bounds (size() = 0)` でエンジンごとクラッシュする不具合をGodot 4.3.stableで確認済み。要素数の少ない配列が後続の要素追加によって巻き込まれる形で発生する。
+- **対策**: 同様のネスト型付き配列は `const` ではなく `var`（または `static var`）にすること。
+```gdscript
+# ✅ 安全
+static var LEVEL_SOLUTIONS: Array[PackedStringArray] = [
+    ["DOWN"],
+    ["RIGHT", "RIGHT", "DOWN", "DOWN", "LEFT"],
+]
+```
+
+### ℹ️ ヘッドレス(ダミーレンダラ)実行時の `mesh_get_surface_count` エラーは無害
+```
+ERROR: Parameter "m" is null.
+   at: mesh_get_surface_count (servers/rendering/dummy/storage/mesh_storage.h:120)
+```
+- `--headless` 実行時、`MeshInstance3D`（`CSGBox3D`でも同様）を1つでも生成すると起動時に1回だけ出力される。CSG固有の問題ではなく、ダミーレンダラ自体の制約によるログである。
+- 実機検証済み: 300フレーム相当のヘッドレス実行でもクラッシュせず `EXIT: 0` で正常終了する。ゲームロジックへの影響はないため、無視して良い。
+
+### ✅ Xvfb + ソフトウェアレンダラでのスクリーンショット取得は実際に成功する
+```bash
+xvfb-run -a --server-args="-screen 0 1280x720x24" \
+  ./godot --path . --rendering-driver opengl3 --resolution 1280x720 --quit-after 120
+```
+- Mesa/llvmpipe（ソフトウェアOpenGL）が利用可能なコンテナでは、上記コマンドで実際にゲーム画面をレンダリングしPNG保存できることを確認済み（`get_viewport().get_texture().get_image().save_png(...)`）。
+- ディスプレイの無い環境でも「最終的な軽い目視確認」は実行可能なので、Phase 5のQAで積極的に活用してよい（ただし正しさの一次判定はGUTのアサーションに委ねる方針は変えない）。
+
+### ✅ 小さいグリッドの3DパズルではPerspectiveよりOrthogonal（平行投影）カメラ
+- 盤面サイズに対してカメラを近づけざるを得ない小さいグリッド（例: 3x4）では、透視投影(Perspective)だと広角レンズのような強いパースの歪みが出る。
+- `Camera3D.projection = Camera3D.PROJECTION_ORTHOGONAL` + `size` をグリッドサイズに応じて設定することで歪みのない見た目になる。実機スクリーンショットで確認済み。
+
 ## パフォーマンスガイドライン
 | 項目 | 推奨値 |
 |------|--------|
