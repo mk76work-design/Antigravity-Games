@@ -43,13 +43,23 @@ func _ready() -> void:
 
 
 ## 光の当たり方で立体感を出すため、環境光を暗めに抑えて方向光とのコントラストを作る（F-1）。
+## 背景はテクスチャ不要のProceduralSkyMaterialで宇宙空間らしいグラデーションにする。
 func _setup_environment() -> void:
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color(0.01, 0.01, 0.05)
+	sky_material.sky_horizon_color = Color(0.08, 0.07, 0.16)
+	sky_material.sky_curve = 0.15
+	sky_material.ground_bottom_color = Color(0.01, 0.01, 0.03)
+	sky_material.ground_horizon_color = Color(0.05, 0.04, 0.09)
+
+	var sky := Sky.new()
+	sky.sky_material = sky_material
+
 	var environment := Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.09, 0.09, 0.12)
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.3, 0.3, 0.38)
-	environment.ambient_light_energy = 0.5
+	environment.background_mode = Environment.BG_SKY
+	environment.sky = sky
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	environment.ambient_light_energy = 0.6
 
 	var world_environment := WorldEnvironment.new()
 	world_environment.environment = environment

@@ -19,6 +19,7 @@ ZeroGCargo/
 │   ├── nodes/                 # シーンツリーに紐づく制御スクリプト
 │   │   ├── main.gd
 │   │   ├── board_view_3d.gd
+│   │   ├── primitive_shapes.gd
 │   │   ├── player_controller.gd
 │   │   └── hud.gd
 │   └── autoload/
@@ -43,7 +44,7 @@ ZeroGCargo/
 
 | 拡張子 | ファイル数 | 合計行数 | 備考 |
 |--------|----------|---------|------|
-| .gd | 10 | 738 | 全ファイル300行以内 |
+| .gd | 11 | 873 | 全ファイル300行以内 |
 | .tscn | 1 | 6 | Main.tscn（最小構成、ノードはコードで構築） |
 | .godot | 1 | - | project.godot |
 
@@ -55,8 +56,9 @@ ZeroGCargo/
 |------|------|------|
 | `scripts/core/cargo_board.gd` | 90 | 盤面ロジック本体（RefCounted） |
 | `scripts/core/level_data.gd` | 59 | 5レベル分のレイアウト定義 |
-| `scripts/nodes/main.gd` | 103 | エントリポイント、カメラ/環境光/結線、画面振動 |
-| `scripts/nodes/board_view_3d.gd` | 186 | 3Dプリミティブ表示（静的構築+Tween差分更新、チェッカー床、発光ターゲット、スクイーズ演出） |
+| `scripts/nodes/main.gd` | 113 | エントリポイント、カメラ/環境光(プロシージャルスカイ)/結線、画面振動 |
+| `scripts/nodes/board_view_3d.gd` | 174 | 盤面状態とTweenアニメーションの橋渡し（見た目はprimitive_shapes.gdに委譲） |
+| `scripts/nodes/primitive_shapes.gd` | 121 | 壁・床・目標・カーゴ・プレイヤーの複合プリミティブ生成ファクトリ |
 | `scripts/nodes/player_controller.gd` | 48 | 入力受付 |
 | `scripts/nodes/hud.gd` | 71 | UI表示（半透明パネル、CLEARポップ演出） |
 | `scripts/autoload/game_manager.gd` | 36 | レベル進行管理（Autoload） |

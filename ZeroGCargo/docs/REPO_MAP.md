@@ -36,11 +36,26 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 | `_on_box_landed_on_target` | `() -> void` | カーゴが目標に乗った際の軽い画面振動（H-3: light相当） |
 
 ## `scripts/nodes/board_view_3d.gd` — `class_name BoardView3D extends Node3D`
+見た目の構築自体は`primitive_shapes.gd`に委譲し、盤面状態とTweenの橋渡しに専念する。
+
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
 | `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（チェッカー床・壁・発光目標・カーゴ・プレイヤー） |
-| `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新、着地時にスクイーズ演出 |
+| `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新、着地時にスクイーズ演出。プレイヤーは移動方向へ`look_at`で向きを変える |
 | シグナル | `box_landed_on_target` | カーゴが目標パッドに乗った瞬間に発火（main.gdの画面振動トリガー） |
+
+## `scripts/nodes/primitive_shapes.gd` — `class_name PrimitiveShapes extends RefCounted`
+手描きアセット無しで「3Dらしさ」を出すための複合プリミティブ生成ファクトリ（全てstatic関数）。
+色変更・発光アニメーションが必要な要素は `{"root": Node3D, "primary_mesh": MeshInstance3D}` を返す。
+
+| メンバ | シグネチャ | 説明 |
+|--------|-----------|------|
+| `make_box` | `(size, color, local_pos) -> MeshInstance3D` | 単一BoxMesh生成の共通ヘルパー |
+| `make_wall` | `(cell_size, wall_height, base_color) -> Node3D` | 本体+上部トリム+中腹の発光ラインで通路感を出す壁 |
+| `make_floor` | `(cell_size, floor_height, base_color, inset_color) -> Node3D` | ベース+インセットパネルの床タイル |
+| `make_target_pad` | `(size, height, color) -> Dictionary` | リング状ベース+パルス発光するパッド本体 |
+| `make_cargo_crate` | `(size, color) -> Dictionary` | 本体+蓋(キャップ)のコンテナ風カーゴ |
+| `make_player_robot` | `(size, color) -> Node3D` | 胴体+頭+前面の発光する目の簡易ロボット |
 
 ## `scripts/nodes/player_controller.gd` — `class_name PlayerController extends Node`
 | メンバ | シグネチャ | 説明 |
