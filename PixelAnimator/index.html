@@ -115,10 +115,14 @@
 
     <dialog id="settingsDialog">
         <form method="dialog" id="settingsForm">
-            <h2>API 設定</h2>
-            <p class="settings-hint">Anthropic API キーはこの端末の localStorage にのみ保存され、Anthropic API 以外には送信されません。</p>
-            <label class="field-label" for="apiKeyInput">Anthropic API キー</label>
-            <input id="apiKeyInput" type="password" placeholder="sk-ant-...">
+            <h2>設定</h2>
+            <p class="settings-hint">
+                APIキーは不要です。ローカルにインストールした Claude Code CLI（<code>claude</code>コマンド）を
+                そのまま呼び出し、あなたの Claude Pro/Max/Team サブスクリプションの認証で動作します。
+                未ログインの場合はターミナルで <code>claude login</code> を実行してください。
+            </p>
+            <p id="cliStatusLine" class="status-line"></p>
+
             <label class="field-label" for="modelInput">モデル</label>
             <input id="modelInput" type="text" placeholder="claude-sonnet-5" value="claude-sonnet-5">
 
@@ -131,7 +135,7 @@
             <input id="maxIterationsInput" type="number" min="1" max="5" value="3">
 
             <div class="dialog-actions">
-                <button id="clearKeyBtn" type="button" class="secondary-btn">キーを削除</button>
+                <button id="checkCliBtn" type="button" class="secondary-btn">CLI接続を確認</button>
                 <button type="submit" class="primary-btn">保存して閉じる</button>
             </div>
         </form>

@@ -75,6 +75,41 @@
 
 ---
 
+### [2026-08-27] [PixelAnimator] - APIキーからサブスクリプション直結（Claude Code CLI）への切り替え
+- **問題**: ユーザーから「APIは使わず、サブスクのプランで直接操作させたい」という
+  明確な要望があった。それまでの実装はAnthropic APIキーをユーザー自身に発行させ、
+  `localStorage`に保存してブラウザから直接REST APIを叩く方式で、従量課金のAPIキーが
+  別途必要だった。
+- **原因**: ブラウザ単体のJavaScriptからは子プロセスを起動できないため、
+  「ローカルにログイン済みのClaude Code CLI（サブスクリプション認証）」を使うには
+  ブラウザ以外の実行主体が必要だった。
+- **解決策**: Viteの開発サーバーに `configureServer` ミドルウェアプラグイン
+  （`vite.config.js`）を追加し、`server/claudeApi.js`（Node専用）が
+  `child_process.execFile('claude', [...])` でローカルの `claude` CLIを子プロセスとして
+  起動する構成にした。CLIには `--json-schema` で構造化出力スキーマを、
+  `--system-prompt` でシステムプロンプトを、`--model` でモデルを指定でき、
+  戻り値の `structured_output` フィールドにパース済みJSONが入っている
+  （`--output-format json` 使用時）。画像入力（自己レビュー）は、base64画像を
+  一時ファイルに書き出し、`--allowedTools Read --add-dir <tmpdir> --permission-mode dontAsk`
+  でCLIの `Read` ツールに読ませることで実現した。CLIの認証はユーザーがターミナルで
+  `claude login` した際のOAuthをそのまま使うため、Anthropic APIキーは完全に不要になった。
+  ブラウザ側（`aiClient.js`）は `callClaude()` の中身を「Anthropic REST APIへのfetch」から
+  「`/api/claude` へのfetch」に差し替えるだけで済み、`generateWithSelfCheck()` を含む
+  上位のロジックはほぼ無改修だった（サーバーが返すレスポンス形をAnthropicの
+  tool_use形式 `{content:[{type:'tool_use', name, input}]}` に合わせたため）。
+- **教訓**: 「ブラウザ完結」と「ローカルCLIのサブスクリプション認証を使う」は両立しない
+  （子プロセス起動が必須になる）。ただし、上位のプロンプト構築・スキーマ検証・自己チェック
+  ループのロジックを「レスポンス形状」で抽象化しておけば、トランスポート層（REST API直叩き
+  ↔ ローカルCLI経由）の差し替えは驚くほど局所的な変更で済む。また `claude` CLIの
+  `--json-schema` は Anthropic APIの forced tool_choice と同等の「必ずこの形式で返す」
+  保証を、ヘッドレスモードでも提供してくれる（実際に本物のCLIで動作確認済み）。
+  `--bare` フラグは認証を `ANTHROPIC_API_KEY` のみに制限してしまう（OAuth/keychainを
+  読まない）ため、サブスクリプション認証を使いたい場合は絶対に付けてはいけない。
+- **関連ファイル**: `server/claudeApi.js`, `vite.config.js`, `aiClient.js`（`callClaude`）,
+  `index.html`（設定ダイアログからAPIキー欄を削除しCLI接続確認ボタンを追加）
+
+---
+
 ### 🔄 引き継ぎ事項 (2026-08-27)
 > 実際のAnthropic APIキーでの生成テストは未実施（サンドボックス環境にネットワーク上の
 > 制約があり、fetchをモックしたPlaywrightテストで「ヒューリスティック不合格→再生成」

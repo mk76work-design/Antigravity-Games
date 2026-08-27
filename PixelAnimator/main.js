@@ -4,8 +4,7 @@ import { createEmptyProject, ProjectStore } from './state.js';
 import {
     generateWithSelfCheck,
     regenerateFrame,
-    getApiKey,
-    setApiKey,
+    checkCliHealth,
     getModel,
     setModel,
     getSelfCheckEnabled,
@@ -55,11 +54,11 @@ const importJsonInput = $('importJsonInput');
 const settingsBtn = $('settingsBtn');
 const settingsDialog = $('settingsDialog');
 const settingsForm = $('settingsForm');
-const apiKeyInput = $('apiKeyInput');
 const modelInput = $('modelInput');
-const clearKeyBtn = $('clearKeyBtn');
 const selfCheckToggle = $('selfCheckToggle');
 const maxIterationsInput = $('maxIterationsInput');
+const checkCliBtn = $('checkCliBtn');
+const cliStatusLine = $('cliStatusLine');
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
@@ -341,26 +340,39 @@ importJsonInput.addEventListener('change', async () => {
 
 // ── 設定ダイアログ ──
 
+async function refreshCliStatus(targetEl) {
+    targetEl.textContent = '確認中...';
+    targetEl.className = 'status-line';
+    const health = await checkCliHealth();
+    if (health.available) {
+        targetEl.textContent = `✅ claude CLIに接続できました（${health.version || 'version不明'}）。`;
+        targetEl.className = 'status-line ok';
+    } else {
+        targetEl.textContent = `⚠️ ${health.message}`;
+        targetEl.className = 'status-line warn';
+    }
+    return health;
+}
+
 settingsBtn.addEventListener('click', () => {
-    apiKeyInput.value = getApiKey();
     modelInput.value = getModel();
     selfCheckToggle.checked = getSelfCheckEnabled();
     maxIterationsInput.value = String(getMaxIterations());
     settingsDialog.showModal();
+    refreshCliStatus(cliStatusLine);
 });
 
 settingsForm.addEventListener('submit', () => {
-    setApiKey(apiKeyInput.value.trim());
     setModel(modelInput.value.trim());
     setSelfCheckEnabled(selfCheckToggle.checked);
     setMaxIterations(Number(maxIterationsInput.value));
 });
 
-clearKeyBtn.addEventListener('click', () => {
-    apiKeyInput.value = '';
-    setApiKey('');
-});
+checkCliBtn.addEventListener('click', () => refreshCliStatus(cliStatusLine));
 
-if (!getApiKey()) {
-    setStatus('先に右上の「設定」からAnthropic APIキーを登録してください。', '');
-}
+// 起動時にもさりげなく確認しておく（未接続ならメイン画面のステータス欄で知らせる）
+checkCliHealth().then((health) => {
+    if (!health.available) {
+        setStatus(`⚠️ ${health.message}`, 'warn');
+    }
+});

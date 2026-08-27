@@ -7,18 +7,27 @@
 ```
 main.js
 ├── state.js       ← createEmptyProject(), ProjectStore
-├── aiClient.js    ← generateWithSelfCheck(), regenerateFrame(),
-│                     getApiKey()/setApiKey(), getModel()/setModel(),
+├── aiClient.js    ← generateWithSelfCheck(), regenerateFrame(), checkCliHealth(),
+│                     getModel()/setModel(),
 │                     getSelfCheckEnabled()/setSelfCheckEnabled(),
 │                     getMaxIterations()/setMaxIterations()
 │   ├── qa.js       ← runHeuristicChecks() （aiClient内部から呼ばれる）
-│   └── exporter.js ← getReviewSpritesheetBase64() （aiClient内部から呼ばれる）
+│   ├── exporter.js ← getReviewSpritesheetBase64() （aiClient内部から呼ばれる）
+│   └── fetch('/api/claude', ...) / fetch('/api/claude/health')
+│         ↓ （Vite開発サーバーのミドルウェア。vite.config.js）
+│       server/claudeApi.js ← handleClaudeApi(), checkClaudeCliHealth()
+│         ↓ execFile('claude', [...])
+│       ローカルの Claude Code CLI（`claude`コマンド、Pro/Max/Teamサブスクリプション認証）
 ├── renderer.js    ← drawFrame(), renderPaletteStrip(), renderFrameStrip()
 ├── animator.js    ← Animator
 ├── editor.js      ← PixelEditor
 └── exporter.js    ← exportSpritesheetPng(), exportAnimatedGif(), exportProjectJson(),
                       parseProjectJson(), getReviewSpritesheetBase64()
 ```
+
+`server/claudeApi.js` はNode専用（`node:child_process` 等を使用）で、ブラウザ側
+コード（`aiClient.js` 等）からは import されない。Viteの `configureServer` 経由で
+開発サーバーにのみ生える点に注意。
 
 ## 主要クラス・関数
 
@@ -31,19 +40,25 @@ main.js
 - `duplicateFrame(i)` / `deleteFrame(i)` / `replaceFrame(i, pixels)`
 
 ### `aiClient.js`
+- `checkCliHealth()` → `{ available, version? , message? }`
+  - `/api/claude/health` を叩き、ローカルの `claude` CLIが使えるか確認する。
 - `generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode })`
   → `{ palette, frames, concept }`
-  - `emit_pixel_animation` ツールを forced tool_choice で呼び出し、
+  - `emit_pixel_animation` 相当のJSON Schemaを `callClaude()` 経由で `/api/claude` に渡し、
     パレット配列とフレームごとの2次元ピクセルグリッドを取得・検証・フラット化する。
   - 単発の生成関数。通常はこれを直接使わず `generateWithSelfCheck()` 経由で呼ぶ。
 - `regenerateFrame({ description, width, height, palette, neighborFrames, frameIndex })`
   → 1フレーム分の `pixels`（フラット配列）
-  - `emit_single_frame` ツールを使い、既存パレット・隣接フレームとの一貫性を保って
-    1枚だけ再生成する（ユーザーが手動で「このフレームだけ再生成」を押したときに使用）。
+  - `emit_single_frame` 相当のスキーマを使い、既存パレット・隣接フレームとの一貫性を
+    保って1枚だけ再生成する（ユーザーが手動で「このフレームだけ再生成」を押したときに使用）。
 - `critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64 })`
   → `{ score, verdict, issues }` （内部関数・非export）
-  - `emit_critique` ツールを使い、スプライトシート画像をClaudeの画像入力として渡して
-    自己採点させる。
+  - `emit_critique` 相当のスキーマを使い、スプライトシート画像をClaude CLIの
+    Readツール経由で読ませて自己採点させる。
+- `callClaude({ system, userText, tool, maxTokens })` （内部関数・非export）
+  - `POST /api/claude` を呼び、`server/claudeApi.js` が返す
+    `{ content: [{ type: 'tool_use', name, input }] }`（Anthropic tool_use互換の形）
+    から `input` を取り出す。上記の各関数から共通で呼ばれる。
 - `generateWithSelfCheck({ description, width, height, frameCount, paletteLimit, loopMode, maxIterations, selfCheckEnabled, onProgress })`
   → `{ palette, frames, concept, iterations, verdict, score?, reasons? }`
   - **メインの生成エントリポイント。** 「生成→ヒューリスティック検証→画像による

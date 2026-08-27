@@ -1,8 +1,10 @@
-// aiClient.js — Anthropic API 呼び出し、プロンプト構築、レスポンス検証、自己チェックパイプライン
+// aiClient.js — ローカルの Claude Code CLI 経由でのプロンプト構築・呼び出し・
+// レスポンス検証・自己チェックパイプライン
 //
-// API キーはユーザー自身のものを localStorage に保存し、ブラウザから直接
-// Anthropic API を叩く（anthropic-dangerous-direct-browser-access ヘッダ使用）。
-// キーは Anthropic API 以外のどこにも送信しない。
+// Anthropic APIキーは使わない。実際の呼び出しは /api/claude （vite.config.js の
+// 開発サーバーミドルウェア）経由でローカルの `claude` コマンド（Claude Code CLI）に
+// 委譲され、ユーザーがローカルで `claude login` 済みの Claude Pro/Max/Team
+// サブスクリプションの認証をそのまま使う。API従量課金は発生しない。
 //
 // 「ユーザーのチェック・修正回数を減らす」ことが最優先の設計目標。そのため
 // generateWithSelfCheck() は、生成 → ヒューリスティック検証 → AIによる画像レビュー →
@@ -12,21 +14,21 @@
 import { runHeuristicChecks } from './qa.js';
 import { getReviewSpritesheetBase64 } from './exporter.js';
 
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const KEY_STORAGE = 'pixelAnimator.apiKey';
+const CLAUDE_API_ENDPOINT = '/api/claude';
+const CLAUDE_HEALTH_ENDPOINT = '/api/claude/health';
 const MODEL_STORAGE = 'pixelAnimator.model';
 const SELF_CHECK_STORAGE = 'pixelAnimator.selfCheckEnabled';
 const MAX_ITERATIONS_STORAGE = 'pixelAnimator.maxIterations';
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_MAX_ITERATIONS = 3;
 
-export function getApiKey() {
-    return localStorage.getItem(KEY_STORAGE) || '';
-}
-
-export function setApiKey(key) {
-    if (key) localStorage.setItem(KEY_STORAGE, key);
-    else localStorage.removeItem(KEY_STORAGE);
+export async function checkCliHealth() {
+    try {
+        const res = await fetch(CLAUDE_HEALTH_ENDPOINT);
+        return await res.json();
+    } catch {
+        return { available: false, message: 'ローカルサーバーに接続できませんでした（npm run dev で起動しているか確認してください）。' };
+    }
 }
 
 export function getModel() {
@@ -179,26 +181,15 @@ function buildCritiqueToolSchema() {
 }
 
 async function callClaude({ system, userText, tool, maxTokens = 16000 }) {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-        throw new Error('APIキーが未設定です。右上の「設定」からAnthropic APIキーを入力してください。');
-    }
-
-    const res = await fetch(API_URL, {
+    const res = await fetch(CLAUDE_API_ENDPOINT, {
         method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
             model: getModel(),
             max_tokens: maxTokens,
             system,
-            messages: [{ role: 'user', content: userText }],
-            tools: [tool],
-            tool_choice: { type: 'tool', name: tool.name },
+            userText,
+            tool,
         }),
     });
 
@@ -206,11 +197,11 @@ async function callClaude({ system, userText, tool, maxTokens = 16000 }) {
         let detail = '';
         try {
             const errBody = await res.json();
-            detail = errBody?.error?.message || JSON.stringify(errBody);
+            detail = errBody?.error || JSON.stringify(errBody);
         } catch {
             detail = await res.text();
         }
-        throw new Error(`Anthropic API エラー (${res.status}): ${detail}`);
+        throw new Error(detail || `ローカルサーバーがエラーを返しました (${res.status})`);
     }
 
     const data = await res.json();
