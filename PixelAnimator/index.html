@@ -58,6 +58,7 @@
 
                 <button id="generateBtn" class="primary-btn">🪄 AIエージェントに描かせる</button>
                 <p id="statusLine" class="status-line" role="status" aria-live="polite"></p>
+                <div id="agentLog" class="agent-log" aria-live="polite"></div>
             </section>
 
             <section class="panel panel-stage">
@@ -120,6 +121,15 @@
             <input id="apiKeyInput" type="password" placeholder="sk-ant-...">
             <label class="field-label" for="modelInput">モデル</label>
             <input id="modelInput" type="text" placeholder="claude-sonnet-5" value="claude-sonnet-5">
+
+            <p class="settings-hint">AIエージェントが自分の出力を自己採点し、問題があれば自動で描き直します。ユーザーの確認・修正の手間を減らすための機能です。</p>
+            <label class="checkbox-row">
+                <input id="selfCheckToggle" type="checkbox" checked>
+                自己チェック・自動修正を有効にする（推奨）
+            </label>
+            <label class="field-label" for="maxIterationsInput">最大やり直し回数（これを超えたら人の確認に委ねる）</label>
+            <input id="maxIterationsInput" type="number" min="1" max="5" value="3">
+
             <div class="dialog-actions">
                 <button id="clearKeyBtn" type="button" class="secondary-btn">キーを削除</button>
                 <button type="submit" class="primary-btn">保存して閉じる</button>

@@ -16,7 +16,8 @@ function triggerDownload(blobOrUrl, filename) {
     if (blobOrUrl instanceof Blob) URL.revokeObjectURL(url);
 }
 
-export async function exportSpritesheetPng(project) {
+// 等倍・透過ありのネイティブ解像度スプライトシート（アセット書き出し用）
+function buildNativeSpritesheetCanvas(project) {
     const { width, height, palette, frames } = project;
     const sheet = document.createElement('canvas');
     sheet.width = width * frames.length;
@@ -40,9 +41,66 @@ export async function exportSpritesheetPng(project) {
         }
         ctx.putImageData(imgData, frameIdx * width, 0);
     });
+    return sheet;
+}
 
+// 拡大・市松模様の背景付きスプライトシート（AIによる画像レビュー用）。
+// 透過部分をはっきり見せ、小さいドット絵でも判定しやすいよう拡大する。
+function buildReviewSpritesheetCanvas(project, scale = 10) {
+    const { width, height, palette, frames } = project;
+    const sheet = document.createElement('canvas');
+    sheet.width = width * scale * frames.length;
+    sheet.height = height * scale;
+    const ctx = sheet.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    const checkerUnit = Math.max(2, Math.floor(scale / 2));
+    for (let y = 0; y < sheet.height; y += checkerUnit) {
+        for (let x = 0; x < sheet.width; x += checkerUnit) {
+            const even = (Math.floor(x / checkerUnit) + Math.floor(y / checkerUnit)) % 2 === 0;
+            ctx.fillStyle = even ? '#3a3a3a' : '#242424';
+            ctx.fillRect(x, y, checkerUnit, checkerUnit);
+        }
+    }
+
+    frames.forEach((pixels, frameIdx) => {
+        const ox = frameIdx * width * scale;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const v = pixels[y * width + x];
+                if (v === -1 || v === undefined) continue;
+                ctx.fillStyle = palette[v] || '#ff00ff';
+                ctx.fillRect(ox + x * scale, y * scale, scale, scale);
+            }
+        }
+        if (frameIdx > 0) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(ox + 0.5, 0);
+            ctx.lineTo(ox + 0.5, sheet.height);
+            ctx.stroke();
+        }
+    });
+
+    return sheet;
+}
+
+export async function exportSpritesheetPng(project) {
+    const sheet = buildNativeSpritesheetCanvas(project);
     const blob = await new Promise((resolve) => sheet.toBlob(resolve, 'image/png'));
     triggerDownload(blob, 'pixel-animation-spritesheet.png');
+}
+
+// AIエージェントによる自己レビュー用に、拡大済みスプライトシートをbase64 PNGとして返す。
+// 画像APIのサイズ・トークンコストを抑えるため、シート全体の幅が一定以内に収まるよう
+// 拡大率を動的に決める。
+export function getReviewSpritesheetBase64(project) {
+    const { width, frames } = project;
+    const maxSheetWidth = 1400;
+    const scale = Math.max(2, Math.min(12, Math.floor(maxSheetWidth / (width * frames.length))));
+    const sheet = buildReviewSpritesheetCanvas(project, scale);
+    return sheet.toDataURL('image/png').split(',')[1];
 }
 
 export async function exportAnimatedGif(project) {

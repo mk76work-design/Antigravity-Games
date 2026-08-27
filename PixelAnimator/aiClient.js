@@ -1,13 +1,24 @@
-// aiClient.js — Anthropic API 呼び出し、プロンプト構築、レスポンス検証
+// aiClient.js — Anthropic API 呼び出し、プロンプト構築、レスポンス検証、自己チェックパイプライン
 //
 // API キーはユーザー自身のものを localStorage に保存し、ブラウザから直接
 // Anthropic API を叩く（anthropic-dangerous-direct-browser-access ヘッダ使用）。
 // キーは Anthropic API 以外のどこにも送信しない。
+//
+// 「ユーザーのチェック・修正回数を減らす」ことが最優先の設計目標。そのため
+// generateWithSelfCheck() は、生成 → ヒューリスティック検証 → AIによる画像レビュー →
+// （問題があれば）フィードバックを添えて再生成、を最大イテレーション回数まで
+// AIエージェント自身の中で完結させ、ユーザーには基本的に最終結果だけを見せる。
+
+import { runHeuristicChecks } from './qa.js';
+import { getReviewSpritesheetBase64 } from './exporter.js';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const KEY_STORAGE = 'pixelAnimator.apiKey';
 const MODEL_STORAGE = 'pixelAnimator.model';
+const SELF_CHECK_STORAGE = 'pixelAnimator.selfCheckEnabled';
+const MAX_ITERATIONS_STORAGE = 'pixelAnimator.maxIterations';
 const DEFAULT_MODEL = 'claude-sonnet-5';
+const DEFAULT_MAX_ITERATIONS = 3;
 
 export function getApiKey() {
     return localStorage.getItem(KEY_STORAGE) || '';
@@ -24,6 +35,24 @@ export function getModel() {
 
 export function setModel(model) {
     localStorage.setItem(MODEL_STORAGE, model || DEFAULT_MODEL);
+}
+
+export function getSelfCheckEnabled() {
+    const v = localStorage.getItem(SELF_CHECK_STORAGE);
+    return v === null ? true : v === '1';
+}
+
+export function setSelfCheckEnabled(enabled) {
+    localStorage.setItem(SELF_CHECK_STORAGE, enabled ? '1' : '0');
+}
+
+export function getMaxIterations() {
+    const v = Number(localStorage.getItem(MAX_ITERATIONS_STORAGE));
+    return Number.isInteger(v) && v >= 1 && v <= 5 ? v : DEFAULT_MAX_ITERATIONS;
+}
+
+export function setMaxIterations(n) {
+    localStorage.setItem(MAX_ITERATIONS_STORAGE, String(Math.min(5, Math.max(1, Math.round(n) || DEFAULT_MAX_ITERATIONS))));
 }
 
 // ドット絵の「品質」を左右する演出ルール。
@@ -109,6 +138,42 @@ function buildSingleFrameToolSchema(width, height) {
                 },
             },
             required: ['pixels'],
+        },
+    };
+}
+
+function buildCritiqueToolSchema() {
+    return {
+        name: 'emit_critique',
+        description: '生成されたドット絵アニメーションのスプライトシート画像を、依頼内容と品質基準に照らして評価する。',
+        input_schema: {
+            type: 'object',
+            properties: {
+                score: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 10,
+                    description: '品質スコア（10が最高）。発注内容が伝わり、シルエットが読め、フレーム間の一貫性があれば7以上。',
+                },
+                verdict: {
+                    type: 'string',
+                    enum: ['approve', 'needs_fix'],
+                    description: 'スコアが7以上かつ致命的な問題がなければ approve。それ以外は needs_fix。',
+                },
+                issues: {
+                    type: 'array',
+                    description: 'needs_fix の場合の具体的な修正指示のリスト。approve の場合は空配列でよい。',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            problem: { type: 'string', description: '見つかった具体的な問題。' },
+                            suggestion: { type: 'string', description: 'どう直すべきかの具体的な指示。' },
+                        },
+                        required: ['problem', 'suggestion'],
+                    },
+                },
+            },
+            required: ['score', 'verdict', 'issues'],
         },
     };
 }
@@ -250,4 +315,127 @@ ${neighborsText || '（他フレームなし）'}
     const result = await callClaude({ system: STYLE_GUIDE, userText, tool, maxTokens: 8000 });
     validateGrid(result.pixels, width, height, palette.length, '再生成フレーム');
     return flattenGrid(result.pixels, width, height);
+}
+
+async function critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64 }) {
+    const tool = buildCritiqueToolSchema();
+    const userText = [
+        {
+            type: 'text',
+            text: `${STYLE_GUIDE}
+
+# 元の発注内容
+${description}
+
+# 仕様
+- キャンバスサイズ: ${width}px × ${height}px
+- フレーム数: ${frameCount}
+- ループ種類: ${loopMode}
+
+添付画像は、生成されたドット絵アニメーションのフレームを左から右へ順番に並べたスプライトシート
+（拡大表示・透明部分は市松模様）です。これを自分自身の作品として厳しく採点してください。特に:
+- 発注内容のモチーフが見て分かるか
+- シルエットの視認性
+- フレーム間で同一モチーフとして一貫しているか（プロポーションや位置が破綻していないか）
+- 指定された色数・配色の範囲内で読みやすいか
+
+emit_critique ツールで採点結果を返してください。`,
+        },
+        {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: imageBase64 },
+        },
+    ];
+
+    const result = await callClaude({ system: STYLE_GUIDE, userText, tool, maxTokens: 2000 });
+    if (typeof result.score !== 'number' || !['approve', 'needs_fix'].includes(result.verdict) || !Array.isArray(result.issues)) {
+        throw new Error('AIエージェントのレビュー応答が不正な形式です。');
+    }
+    return result;
+}
+
+function buildFeedbackText(reasons) {
+    return reasons.map((r, i) => `${i + 1}. ${r}`).join('\n');
+}
+
+// AIエージェントが「生成 → ヒューリスティック検証 → 画像による自己レビュー →
+// （必要なら）フィードバックを添えて再生成」を自律的に繰り返すパイプライン。
+// ユーザーの確認・修正回数を減らすことが目的なので、途中経過は onProgress で
+// ログとして流すのみとし、人間の判断は最大イテレーション到達時にのみ求める。
+export async function generateWithSelfCheck({
+    description,
+    width,
+    height,
+    frameCount,
+    paletteLimit,
+    loopMode,
+    maxIterations = DEFAULT_MAX_ITERATIONS,
+    selfCheckEnabled = true,
+    onProgress = () => {},
+}) {
+    let feedback = '';
+
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+        onProgress({ type: 'generating', iteration, maxIterations });
+        const composedDescription = feedback
+            ? `${description}\n\n# 直前の生成でレビューにより指摘された問題（今回は必ず修正すること）\n${feedback}`
+            : description;
+
+        const result = await generateAnimation({
+            description: composedDescription,
+            width,
+            height,
+            frameCount,
+            paletteLimit,
+            loopMode,
+        });
+        const project = { width, height, fps: 8, loopMode, palette: result.palette, frames: result.frames };
+        const base = { palette: result.palette, frames: result.frames, concept: result.concept, iterations: iteration };
+
+        if (!selfCheckEnabled) {
+            onProgress({ type: 'done', iteration, maxIterations, verdict: 'skipped' });
+            return { ...base, verdict: 'skipped' };
+        }
+
+        onProgress({ type: 'heuristic-checking', iteration, maxIterations });
+        const heuristicIssues = runHeuristicChecks(project);
+        if (heuristicIssues.length > 0) {
+            const isLast = iteration >= maxIterations;
+            onProgress({ type: 'heuristic-failed', iteration, maxIterations, issues: heuristicIssues, willRetry: !isLast });
+            if (!isLast) {
+                feedback = buildFeedbackText(heuristicIssues);
+                continue;
+            }
+            return { ...base, verdict: 'needs_review', reasons: heuristicIssues };
+        }
+
+        onProgress({ type: 'vision-reviewing', iteration, maxIterations });
+        let critique;
+        try {
+            const imageBase64 = getReviewSpritesheetBase64(project);
+            critique = await critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64 });
+        } catch (err) {
+            // 画像レビュー自体が失敗した場合は、ヒューリスティック合格をもって承認扱いにする
+            // （ユーザーの手戻りを増やさないことを優先し、ここで停止させない）。
+            onProgress({ type: 'vision-review-error', iteration, maxIterations, message: err.message });
+            return { ...base, verdict: 'approved-heuristic-only' };
+        }
+
+        if (critique.verdict === 'approve') {
+            onProgress({ type: 'done', iteration, maxIterations, verdict: 'approved', score: critique.score });
+            return { ...base, verdict: 'approved', score: critique.score };
+        }
+
+        const reasons = critique.issues.map((i) => `${i.problem} → ${i.suggestion}`);
+        const isLast = iteration >= maxIterations;
+        onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, issues: critique.issues, willRetry: !isLast });
+        if (!isLast) {
+            feedback = buildFeedbackText(reasons);
+            continue;
+        }
+        return { ...base, verdict: 'needs_review', reasons, score: critique.score };
+    }
+
+    // ここには到達しない想定（ループ内で必ず return する）が、念のため。
+    throw new Error('自己チェックパイプラインが異常終了しました。');
 }

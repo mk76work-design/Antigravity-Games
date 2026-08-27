@@ -1,7 +1,18 @@
 // main.js — Pixel Animator のアプリ本体（配線）
 
 import { createEmptyProject, ProjectStore } from './state.js';
-import { generateAnimation, regenerateFrame, getApiKey, setApiKey, getModel, setModel } from './aiClient.js';
+import {
+    generateWithSelfCheck,
+    regenerateFrame,
+    getApiKey,
+    setApiKey,
+    getModel,
+    setModel,
+    getSelfCheckEnabled,
+    setSelfCheckEnabled,
+    getMaxIterations,
+    setMaxIterations,
+} from './aiClient.js';
 import { renderPaletteStrip, renderFrameStrip } from './renderer.js';
 import { Animator } from './animator.js';
 import { PixelEditor } from './editor.js';
@@ -16,6 +27,7 @@ const paletteSizeInput = $('paletteSizeInput');
 const loopSelect = $('loopSelect');
 const generateBtn = $('generateBtn');
 const statusLine = $('statusLine');
+const agentLog = $('agentLog');
 
 const toolGroup = $('toolGroup');
 const undoBtn = $('undoBtn');
@@ -46,12 +58,59 @@ const settingsForm = $('settingsForm');
 const apiKeyInput = $('apiKeyInput');
 const modelInput = $('modelInput');
 const clearKeyBtn = $('clearKeyBtn');
+const selfCheckToggle = $('selfCheckToggle');
+const maxIterationsInput = $('maxIterationsInput');
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
 function setStatus(text, kind = '') {
     statusLine.textContent = text;
     statusLine.className = 'status-line' + (kind ? ` ${kind}` : '');
+}
+
+function clearLog() {
+    agentLog.innerHTML = '';
+}
+
+function appendLog(text, kind = '') {
+    const line = document.createElement('div');
+    line.className = 'agent-log-entry' + (kind ? ` ${kind}` : '');
+    line.textContent = text;
+    agentLog.appendChild(line);
+    agentLog.scrollTop = agentLog.scrollHeight;
+}
+
+function handleAgentProgress(event) {
+    const tag = `[${event.iteration}/${event.maxIterations}]`;
+    switch (event.type) {
+        case 'generating':
+            appendLog(`🪄 ${tag} 生成中...`);
+            break;
+        case 'heuristic-checking':
+            appendLog(`🔍 ${tag} 機械的な品質チェック中...`);
+            break;
+        case 'heuristic-failed':
+            appendLog(`⚠️ ${tag} 問題を検出: ${event.issues.join(' / ')}`, 'warn');
+            appendLog(event.willRetry ? `↻ ${tag} フィードバックを添えて再生成します。` : `⏹ ${tag} 上限回数に達しました。ユーザーの確認が必要です。`, 'warn');
+            break;
+        case 'vision-reviewing':
+            appendLog(`👁 ${tag} AIエージェントが自分の絵を画像として確認中...`);
+            break;
+        case 'vision-review-error':
+            appendLog(`⚠️ ${tag} 画像レビューに失敗（機械的チェックの合格分を採用）: ${event.message}`, 'warn');
+            break;
+        case 'vision-needs-fix':
+            appendLog(`📝 ${tag} 自己採点 ${event.score}/10 → 修正: ${event.issues.map((i) => i.problem).join(' / ')}`, 'warn');
+            appendLog(event.willRetry ? `↻ ${tag} フィードバックを添えて再生成します。` : `⏹ ${tag} 上限回数に達しました。ユーザーの確認が必要です。`, 'warn');
+            break;
+        case 'done':
+            if (event.verdict === 'approved') {
+                appendLog(`✅ ${tag} 自己チェック合格（スコア ${event.score}/10）。`, 'ok');
+            } else if (event.verdict === 'skipped') {
+                appendLog('ℹ️ 自己チェックは無効化されています。');
+            }
+            break;
+    }
 }
 
 function flatTo2D(flat, width, height) {
@@ -188,15 +247,19 @@ generateBtn.addEventListener('click', async () => {
     const loopMode = loopSelect.value;
 
     generateBtn.disabled = true;
-    setStatus('AIエージェントが描画中...（数十秒かかることがあります）', '');
+    clearLog();
+    setStatus('AIエージェントが描画・自己チェック中...（数十秒〜数分かかることがあります）', '');
     try {
-        const result = await generateAnimation({
+        const result = await generateWithSelfCheck({
             description,
             width: size,
             height: size,
             frameCount,
             paletteLimit,
             loopMode,
+            maxIterations: getMaxIterations(),
+            selfCheckEnabled: getSelfCheckEnabled(),
+            onProgress: handleAgentProgress,
         });
         const project = {
             width: size,
@@ -208,7 +271,7 @@ generateBtn.addEventListener('click', async () => {
         };
         activeColorIndex = 0;
         store.replaceProject(project, 0);
-        setStatus(result.concept ? `完成: ${result.concept}` : '完成しました。', 'ok');
+        setStatus(summarizeResult(result), result.verdict === 'needs_review' ? 'warn' : 'ok');
     } catch (err) {
         console.error(err);
         setStatus(err.message || '生成に失敗しました。', 'error');
@@ -216,6 +279,22 @@ generateBtn.addEventListener('click', async () => {
         generateBtn.disabled = false;
     }
 });
+
+function summarizeResult(result) {
+    const concept = result.concept ? `「${result.concept}」` : '';
+    switch (result.verdict) {
+        case 'approved':
+            return `✅ ${result.iterations}回の試行で自己チェックに合格しました（スコア${result.score}/10）。${concept}`;
+        case 'approved-heuristic-only':
+            return `✅ 機械的な品質チェックには合格しました（AIによる画像レビューは失敗のためスキップ）。${concept}`;
+        case 'skipped':
+            return `完成しました（自己チェックは無効）。${concept}`;
+        case 'needs_review':
+            return `⚠️ ${result.iterations}回試しましたが自己チェックを通過できませんでした。要確認: ${result.reasons.join(' / ')}`;
+        default:
+            return `完成しました。${concept}`;
+    }
+}
 
 // ── 書き出し / 読み込み ──
 
@@ -265,12 +344,16 @@ importJsonInput.addEventListener('change', async () => {
 settingsBtn.addEventListener('click', () => {
     apiKeyInput.value = getApiKey();
     modelInput.value = getModel();
+    selfCheckToggle.checked = getSelfCheckEnabled();
+    maxIterationsInput.value = String(getMaxIterations());
     settingsDialog.showModal();
 });
 
 settingsForm.addEventListener('submit', () => {
     setApiKey(apiKeyInput.value.trim());
     setModel(modelInput.value.trim());
+    setSelfCheckEnabled(selfCheckToggle.checked);
+    setMaxIterations(Number(maxIterationsInput.value));
 });
 
 clearKeyBtn.addEventListener('click', () => {

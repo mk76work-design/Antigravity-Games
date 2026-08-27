@@ -182,6 +182,50 @@ select:focus {
     color: #90ee90;
 }
 
+.status-line.warn {
+    color: #ffd93d;
+}
+
+.agent-log {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #0a0a1a;
+    border: 1px solid #23233f;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    line-height: 1.5;
+}
+
+.agent-log:empty {
+    display: none;
+}
+
+.agent-log-entry {
+    color: #9090a8;
+}
+
+.agent-log-entry.warn {
+    color: #ffd93d;
+}
+
+.agent-log-entry.ok {
+    color: #90ee90;
+}
+
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #e0e0e0;
+    margin: 4px 0;
+}
+
 /* ── ステージ（キャンバス） ── */
 
 .stage-toolbar {
