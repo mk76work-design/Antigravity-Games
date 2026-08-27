@@ -73,6 +73,9 @@ function printUsage() {
   --frames <n または n,n,n>      フレーム数。単一値なら全アクション共通、
                                  カンマ区切りなら --actions と同じ数だけ個別指定。
   --out-dir <path>              必須。出力先ディレクトリ。
+  --concurrency <n>              基準ポーズ確定後、アクションを何件まで同時生成するか
+                                 （デフォルト 2、最大 4。並列数を上げすぎるとローカルの
+                                 claude CLI呼び出しが不安定になる場合がある）。
   --width / --height / --palette / --loop / --fps / --model / --max-iterations /
   --no-self-check / --quiet     generate と同じ（全アクションに共通適用）。
 
@@ -146,6 +149,23 @@ function parseLoopMode(value) {
         throw new Error(`--loop は loop / pingpong / once のいずれかを指定してください（指定値: ${value}）。`);
     }
     return value;
+}
+
+// items を最大 limit 件まで同時実行しつつ順番に処理する。結果は items と同じ順序で返す
+// （worker の完了順ではない）。1件の失敗が他を止めないよう、呼び出し側で
+// worker 内のエラーを結果値として捕捉すること（例外を投げっぱなしにしない）。
+async function runWithConcurrency(items, limit, worker) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    async function runNext() {
+        while (nextIndex < items.length) {
+            const i = nextIndex++;
+            results[i] = await worker(items[i], i);
+        }
+    }
+    const workerCount = Math.max(1, Math.min(limit, items.length));
+    await Promise.all(Array.from({ length: workerCount }, runNext));
+    return results;
 }
 
 // ── generate ──
@@ -263,6 +283,7 @@ async function runCharacterCommand(rest) {
                 model: { type: 'string', default: DEFAULT_MODEL },
                 'max-iterations': { type: 'string', default: String(DEFAULT_MAX_ITERATIONS) },
                 'no-self-check': { type: 'boolean', default: false },
+                concurrency: { type: 'string', default: '2' },
                 quiet: { type: 'boolean', default: false },
             },
         }));
@@ -319,6 +340,18 @@ async function runCharacterCommand(rest) {
     const quiet = values.quiet;
     const outDir = values['out-dir'];
 
+    let concurrency;
+    try {
+        concurrency = parsePositiveInt(values.concurrency, '--concurrency');
+    } catch (err) {
+        fail(err.message);
+        return;
+    }
+    if (concurrency > 4) {
+        log(`⚠️  --concurrency は最大4までにクランプします（指定: ${concurrency}）。ローカルのClaude CLI呼び出しを大量に並列起動すると不安定になる場合があります。`);
+        concurrency = 4;
+    }
+
     // 1. 基準ポーズ（1枚絵）を確定させる。
     log(`\n=== 基準デザインを生成中 ===`);
     let refResult;
@@ -345,12 +378,13 @@ async function runCharacterCommand(rest) {
 
     const reference = { palette: refResult.palette, pixels: refResult.frames[0], width, height };
 
-    // 2. 基準デザインを見せながら、各アクションを順番に生成する。
-    const actionResults = [];
-    for (let i = 0; i < actions.length; i++) {
-        const action = actions[i];
+    // 2. 基準デザインを見せながら、各アクションを生成する（最大 concurrency 件まで並列）。
+    //    1件の失敗（実機ではCLIタイムアウト等が実際に発生した）が他のアクションを
+    //    巻き込まないよう、各workerは例外を投げずに結果オブジェクトとして返す。
+    log(`\n=== ${actions.length}個のアクションを生成中（並列数: ${concurrency}） ===`);
+    const actionResults = await runWithConcurrency(actions, concurrency, async (action, i) => {
         const frameCount = frameCounts[i];
-        log(`\n=== アクション「${action}」を生成中（${i + 1}/${actions.length}） ===`);
+        log(`🪄 [${action}] 開始（${i + 1}/${actions.length}）`);
 
         let result;
         try {
@@ -368,14 +402,13 @@ async function runCharacterCommand(rest) {
                 onProgress: buildOnProgress({ quiet, logPrefix: `[${action}] ` }),
             });
         } catch (err) {
-            actionResults.push({ action, error: err.message || String(err) });
-            continue;
+            return { action, error: err.message || String(err) };
         }
 
         const project = { width, height, fps, loopMode, palette: result.palette, frames: result.frames };
         const files = await writeProjectFiles(path.join(outDir, action), project);
 
-        actionResults.push({
+        return {
             action,
             verdict: result.verdict,
             score: result.score ?? null,
@@ -385,8 +418,8 @@ async function runCharacterCommand(rest) {
             concept: result.concept,
             frameCount,
             files,
-        });
-    }
+        };
+    });
 
     const anyError = actionResults.some((r) => r.error);
     const anyNeedsReview = actionResults.some((r) => r.verdict === 'needs_review');

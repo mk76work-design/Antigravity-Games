@@ -86,13 +86,15 @@ main.js（ブラウザUI・人間の手直し用）
 
 ### `cli.js`
 2つのサブコマンドを持つ。共通ヘルパー: `buildOnProgress()`（進行状況ログ整形）,
-`writeProjectFiles()`（PNG/GIF/JSON書き出し）, `parsePositiveInt()`/`parseLoopMode()`（引数検証）。
+`writeProjectFiles()`（PNG/GIF/JSON書き出し）, `parsePositiveInt()`/`parseLoopMode()`（引数検証）,
+`runWithConcurrency(items, limit, worker)`（順序を保ったまま最大limit件を並列実行する
+軽量ワーカープール。`character`サブコマンドのアクション並列生成に使用）。
 
 - **`generate`** — 単発のアニメーションを1本生成。`--prompt`/`--out` が必須、その他は
   `--width`/`--height`/`--frames`/`--palette`/`--loop`/`--fps`/`--model`/
   `--max-iterations`/`--no-self-check`/`--quiet`。
-  stdout には実行結果のJSON（`verdict`/`score`/`iterations`/`reasons`/`concept`/`files`）
-  のみを出力し、進行状況ログは全て stderr に流す。
+  stdout には実行結果のJSON（`verdict`/`score`/`pixelArtAuthenticity`/`iterations`/
+  `reasons`/`concept`/`files`）のみを出力し、進行状況ログは全て stderr に流す。
   終了コード: `0`=合格またはスキップ、`1`=実行時エラー、`2`=要確認（`needs_review`）。
 
 - **`character`** — 同一キャラクターの複数アクションセットをまとめて生成。
@@ -100,12 +102,15 @@ main.js（ブラウザUI・人間の手直し用）
   単一値（全アクション共通）またはカンマ区切り（`--actions`と同数、アクションごとに
   フレーム数を変える）のどちらでも指定できる。
   1. まず `generateWithSelfCheck({ frameCount: 1, loopMode: 'once', ... })` で
-     基準ポーズ（1枚絵）を確定させ、`<out-dir>/reference.png`（+`.json`、GIFは書き出さない）
-     として保存する。
+     基準ポーズ（1枚絵）を確定させる（これは常に単発・逐次実行）。
+     `<out-dir>/reference.png`（+`.json`、GIFは書き出さない）として保存する。
   2. 各アクションについて、確定した基準ポーズを `reference` として
      `generateWithSelfCheck()` に渡しながら生成し、`<out-dir>/<action>.png/.gif/.json`
      として保存する（アクションごとに独立した自己チェックループが走る）。
-  3. 全体のサマリー（基準デザインの結果 + 各アクションの結果）を
+     `runWithConcurrency()` で **`--concurrency`（デフォルト2、最大4）件まで並列実行**する。
+     1件の失敗（実機ではCLIタイムアウトが実際に発生した）は結果オブジェクトの `error`
+     フィールドとして捕捉され、他のアクションの実行や成果物には影響しない。
+  3. 全体のサマリー（基準デザインの結果 + 各アクションの結果、`--actions`と同じ順序）を
      `<out-dir>/character.json` に書き出し、同じ内容をstdoutにも出力する。
   終了コード: `0`=全て合格、`1`=いずれかのアクションで実行時エラー、
   `2`=エラーはないが1件以上 `needs_review`。
