@@ -37,11 +37,16 @@ export function runHeuristicChecks({ width, height, palette, frames, loopMode })
         }
     });
 
-    // 3. フレーム間の一貫性（変化なし / 変化しすぎ）
+    // 3. フレーム間の一貫性（変化なし・ほぼ変化なし / 変化しすぎ）
+    // 「ほぼ変化なし」は実機テストで観測された失敗パターン: 画像レビューで
+    // 「フレーム間の一貫性を保て」という指摘に対し、AIがフレームをほぼ同一にする
+    // ことで帳尻を合わせてしまい、動き自体が消えてしまうケースがあった。
+    // これをAPI呼び出し不要のヒューリスティックで安く早期に検出する。
+    const NEAR_DUPLICATE_THRESHOLD = 0.03;
     for (let i = 0; i < frames.length - 1; i++) {
         const diff = pixelDiffRatio(frames[i], frames[i + 1]);
-        if (diff === 0) {
-            issues.push(`フレーム${i + 1}とフレーム${i + 2}が完全に同一です。アニメーションとして変化をつけてください。`);
+        if (diff < NEAR_DUPLICATE_THRESHOLD) {
+            issues.push(`フレーム${i + 1}とフレーム${i + 2}がほぼ同一です（差分${(diff * 100).toFixed(1)}%）。これではアニメーションとして動きがほぼ見えません。輪郭・重心・影のいずれかで明確な変化をつけてください（フレームを同一にして「一貫性」の指摘を回避するのは不可）。`);
         } else if (diff > 0.85) {
             issues.push(`フレーム${i + 1}とフレーム${i + 2}の差分が大きすぎます（${Math.round(diff * 100)}%のピクセルが変化）。同一モチーフの自然な動きになるよう調整してください。`);
         }
