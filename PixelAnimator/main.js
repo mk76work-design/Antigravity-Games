@@ -271,6 +271,10 @@ generateBtn.addEventListener('click', async () => {
         activeColorIndex = 0;
         store.replaceProject(project, 0);
         setStatus(summarizeResult(result), result.verdict === 'needs_review' ? 'warn' : 'ok');
+        if (result.verdict === 'needs_review' && result.reasons?.length) {
+            appendLog('— 最終チェックで残った指摘 —', 'warn');
+            result.reasons.forEach((reason) => appendLog(`• ${reason}`, 'warn'));
+        }
     } catch (err) {
         console.error(err);
         setStatus(err.message || '生成に失敗しました。', 'error');
@@ -289,7 +293,7 @@ function summarizeResult(result) {
         case 'skipped':
             return `完成しました（自己チェックは無効）。${concept}`;
         case 'needs_review':
-            return `⚠️ ${result.iterations}回試しましたが自己チェックを通過できませんでした。要確認: ${result.reasons.join(' / ')}`;
+            return `⚠️ ${result.iterations}回試しましたが自己チェックを通過できませんでした。詳細は下のログを確認し、必要なら手直しするか再生成してください。`;
         default:
             return `完成しました。${concept}`;
     }
