@@ -36,8 +36,14 @@ function claudeCliProxyPlugin() {
                     res.end('Method Not Allowed');
                     return;
                 }
+                // res の 'close' はレスポンス完了後にも発火するため、まだ書き終えて
+                // いない（＝クライアントが正真正銘先に切断した）場合のみ中断する。
+                // req の 'close' はリクエストボディの読み込み完了時にも発火してしまい
+                // 開始直後に誤って中断されるため使わないこと。
                 const abortController = new AbortController();
-                req.on('close', () => abortController.abort());
+                res.on('close', () => {
+                    if (!res.writableEnded) abortController.abort();
+                });
                 try {
                     const payload = await readJsonBody(req);
                     const result = await handleClaudeApi(payload, { signal: abortController.signal });
