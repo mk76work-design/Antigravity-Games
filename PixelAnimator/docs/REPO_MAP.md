@@ -5,19 +5,30 @@
 ## モジュール依存関係
 
 ```
-main.js
+core.js（環境非依存の本体ロジック・DOM/fetch/localStorage不使用）
+├── qa.js  ← runHeuristicChecks()
+└── export: buildToolSchema(), buildSingleFrameToolSchema(), buildCritiqueToolSchema(),
+            generateAnimation(), refineAnimation(), regenerateFrame(), critiqueAnimation(),
+            generateWithSelfCheck(), STYLE_GUIDE, DEFAULT_MODEL, DEFAULT_MAX_ITERATIONS
+            （すべて callClaude を、generateWithSelfCheck はさらに renderReviewImage も
+             引数として受け取る＝呼び出し側が実行環境に応じた実装を注入する）
+
+cli.js（★AIエージェント向けCLIエントリポイント）
+├── server/agentCore.js ← core.js に Node向けの callClaude/renderReviewImage を注入
+│   ├── server/claudeApi.js ← handleClaudeApi() をインプロセスで直接呼ぶ（HTTP不使用）
+│   │     ↓ execFile('claude', [...])
+│   │   ローカルの Claude Code CLI（Pro/Max/Teamサブスクリプション認証）
+│   └── server/pngRender.js ← renderReviewImageBase64()（Canvas不使用、pngjsで直接PNG生成）
+└── server/pngRender.js ← buildNativeSpritesheetPng(), buildAnimatedGif()（出力ファイル用）
+
+main.js（ブラウザUI・人間の手直し用）
 ├── state.js       ← createEmptyProject(), ProjectStore
-├── aiClient.js    ← generateWithSelfCheck(), regenerateFrame(), checkCliHealth(),
-│                     getModel()/setModel(),
-│                     getSelfCheckEnabled()/setSelfCheckEnabled(),
-│                     getMaxIterations()/setMaxIterations()
-│   ├── qa.js       ← runHeuristicChecks() （aiClient内部から呼ばれる）
+├── aiClient.js    ← core.js に ブラウザ向けの callClaude/renderReviewImage を注入
+│   ├── core.js（上記と同じものを共有）
 │   ├── exporter.js ← getReviewSpritesheetBase64() （aiClient内部から呼ばれる）
 │   └── fetch('/api/claude', ...) / fetch('/api/claude/health')
 │         ↓ （Vite開発サーバーのミドルウェア。vite.config.js）
 │       server/claudeApi.js ← handleClaudeApi(), checkClaudeCliHealth()
-│         ↓ execFile('claude', [...])
-│       ローカルの Claude Code CLI（`claude`コマンド、Pro/Max/Teamサブスクリプション認証）
 ├── renderer.js    ← drawFrame(), renderPaletteStrip(), renderFrameStrip()
 ├── animator.js    ← Animator
 ├── editor.js      ← PixelEditor
@@ -25,11 +36,86 @@ main.js
                       parseProjectJson(), getReviewSpritesheetBase64()
 ```
 
-`server/claudeApi.js` はNode専用（`node:child_process` 等を使用）で、ブラウザ側
-コード（`aiClient.js` 等）からは import されない。Viteの `configureServer` 経由で
-開発サーバーにのみ生える点に注意。
+`server/` 配下と `core.js`・`qa.js` はNode専用またはDOM非依存。`cli.js` はこれらだけで
+完結し、ブラウザ・Vite開発サーバーを一切必要としない。`aiClient.js`・`renderer.js`・
+`animator.js`・`editor.js`・`exporter.js`・`main.js`・`state.js` はブラウザ専用（DOM前提）。
 
 ## 主要クラス・関数
+
+### `core.js`（環境非依存の本体ロジック）
+- `generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, callClaude })`
+  → `{ palette, frames, concept }`
+  - `emit_pixel_animation` 相当のJSON Schemaを注入された `callClaude` に渡し、
+    パレット配列とフレームごとの2次元ピクセルグリッドを取得・検証・フラット化する。
+  - 単発の生成関数。通常はこれを直接使わず `generateWithSelfCheck()` 経由で呼ぶ。
+- `refineAnimation({ description, width, height, frameCount, paletteLimit, loopMode, palette, frames, issues, callClaude })`
+  → `{ palette, frames, concept }`
+  - 直前の実ピクセルデータをそのまま見せ、指摘箇所だけをピクセル単位で修正させる。
+    白紙から再生成するより収束が速いことを実機検証済み（詳細は LESSONS_LEARNED.md）。
+- `regenerateFrame({ description, width, height, palette, neighborFrames, frameIndex, callClaude })`
+  → 1フレーム分の `pixels`（フラット配列）
+  - `emit_single_frame` 相当のスキーマを使い、既存パレット・隣接フレームとの一貫性を
+    保って1枚だけ再生成する（ブラウザUIで「このフレームだけ再生成」を押したときに使用）。
+- `critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64, callClaude })`
+  → `{ score, verdict, issues }`
+  - `emit_critique` 相当のスキーマを使い、スプライトシート画像をClaude CLIの
+    Readツール経由で読ませて自己採点させる。
+- `generateWithSelfCheck({ description, width, height, frameCount, paletteLimit, loopMode, maxIterations, selfCheckEnabled, onProgress, callClaude, renderReviewImage })`
+  → `{ palette, frames, concept, iterations, verdict, score?, reasons? }`
+  - **メインの生成エントリポイント。** 「生成→ヒューリスティック検証→画像による
+    自己批評→（必要なら）直前データを見せての修正」を `maxIterations` 回まで
+    自律的に繰り返す。`onProgress(event)` で各ステップの状況
+    （`generating` / `heuristic-checking` / `heuristic-failed` / `vision-reviewing` /
+    `vision-needs-fix` / `vision-review-error` / `done`）を通知する。
+  - `verdict` は `approved`（自己チェック合格）/ `approved-heuristic-only`
+    （画像レビューが失敗したためヒューリスティック合格のみで確定）/
+    `needs_review`（上限到達、確認が必要）/ `skipped`（自己チェック無効）。
+- `buildToolSchema()`/`buildSingleFrameToolSchema()`/`buildCritiqueToolSchema()` — 各構造化
+  出力のJSON Schema。`STYLE_GUIDE` — ドット絵の品質ルール（system promptとして全呼び出しに付与）。
+
+### `cli.js`
+- サブコマンドは `generate` のみ（V1）。`--prompt`/`--out` が必須、その他は
+  `--width`/`--height`/`--frames`/`--palette`/`--loop`/`--fps`/`--model`/
+  `--max-iterations`/`--no-self-check`/`--quiet`。
+- stdout には実行結果のJSON（`verdict`/`score`/`iterations`/`reasons`/`concept`/`files`）
+  のみを出力し、進行状況ログは全て stderr に流す（エージェントがパースしやすいように）。
+- 終了コード: `0`=合格またはスキップ、`1`=実行時エラー、`2`=生成完了だが要確認（`needs_review`）。
+
+### `server/agentCore.js`
+- `generateWithSelfCheck({ model, ...params })` — `core.generateWithSelfCheck()` に
+  `callClaude`（`handleClaudeApi()` をインプロセスで直接呼ぶ）と
+  `renderReviewImage`（`pngRender.js` の `renderReviewImageBase64`）を注入して呼び出す。
+
+### `server/pngRender.js`（Node専用、Canvas不使用）
+- `buildNativeSpritesheetPng(project)` → `Buffer`（等倍・透過ありのPNG、pngjsで直接生成）
+- `renderReviewImageBase64(project)` → `Promise<string>`（拡大・市松模様背景付き、
+  自己レビュー画像入力用。exporter.jsのCanvas版と同じレイアウトロジック）
+- `buildAnimatedGif(project)` → `Buffer`（gifenc、透過対応）
+
+### `server/claudeApi.js`
+- `handleClaudeApi({ model, system, userText, tool, maxTokens }, { signal })`
+  → `{ content: [{ type: 'tool_use', name, input }] }`
+  - `execFile('claude', [...])` で子プロセスを起動。HTTP経由（ブラウザから）でも
+    `agentCore.js` からのインプロセス呼び出し（CLI経由）でも共通で使われる。
+- `checkClaudeCliHealth()` → `{ available, version? , message? }`
+
+### `qa.js`
+- `runHeuristicChecks({ width, height, palette, frames, loopMode })` → `string[]`（問題点の文章リスト）
+  - API呼び出し不要で即座に判定できる問題を検出: 全フレーム空白、パレット未使用過多、
+    フレームがほぼ空白、隣接フレームの差分がほぼゼロ（3%未満・フレーム同一化による
+    「一貫性の指摘」誤魔化しを含む）または大きすぎる、ループ指定時の始点・終点の不整合。
+- `pixelDiffRatio(a, b)` → 2つのフレーム（フラット配列）間で値が異なるピクセルの割合。
+
+---
+
+以下はブラウザUI専用のモジュール（`core.js`・`qa.js`・`server/`とは独立）。
+
+### `aiClient.js`（ブラウザアダプタ）
+- `checkCliHealth()` → `{ available, version?, message? }`（`/api/claude/health` を叩く）
+- `generateWithSelfCheck(params)` / `regenerateFrame(params)` — `core.js` に
+  fetchベースの `callClaude` とCanvasベースの `renderReviewImage` を注入して呼び出す薄いラッパー。
+- `getModel()`/`setModel()`, `getSelfCheckEnabled()`/`setSelfCheckEnabled()`,
+  `getMaxIterations()`/`setMaxIterations()` — 設定値の `localStorage` 永続化。
 
 ### `ProjectStore` (state.js)
 - プロジェクト状態: `{ width, height, fps, loopMode, palette, frames }`
@@ -38,48 +124,6 @@ main.js
 - `snapshotBeforeEdit()` / `undo()` / `redo()` — 1ストローク単位のUndo/Redo
 - `setPixel(index, value)` / `commitEdit()` — 編集中の書き込みと確定
 - `duplicateFrame(i)` / `deleteFrame(i)` / `replaceFrame(i, pixels)`
-
-### `aiClient.js`
-- `checkCliHealth()` → `{ available, version? , message? }`
-  - `/api/claude/health` を叩き、ローカルの `claude` CLIが使えるか確認する。
-- `generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode })`
-  → `{ palette, frames, concept }`
-  - `emit_pixel_animation` 相当のJSON Schemaを `callClaude()` 経由で `/api/claude` に渡し、
-    パレット配列とフレームごとの2次元ピクセルグリッドを取得・検証・フラット化する。
-  - 単発の生成関数。通常はこれを直接使わず `generateWithSelfCheck()` 経由で呼ぶ。
-- `regenerateFrame({ description, width, height, palette, neighborFrames, frameIndex })`
-  → 1フレーム分の `pixels`（フラット配列）
-  - `emit_single_frame` 相当のスキーマを使い、既存パレット・隣接フレームとの一貫性を
-    保って1枚だけ再生成する（ユーザーが手動で「このフレームだけ再生成」を押したときに使用）。
-- `critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64 })`
-  → `{ score, verdict, issues }` （内部関数・非export）
-  - `emit_critique` 相当のスキーマを使い、スプライトシート画像をClaude CLIの
-    Readツール経由で読ませて自己採点させる。
-- `callClaude({ system, userText, tool, maxTokens })` （内部関数・非export）
-  - `POST /api/claude` を呼び、`server/claudeApi.js` が返す
-    `{ content: [{ type: 'tool_use', name, input }] }`（Anthropic tool_use互換の形）
-    から `input` を取り出す。上記の各関数から共通で呼ばれる。
-- `generateWithSelfCheck({ description, width, height, frameCount, paletteLimit, loopMode, maxIterations, selfCheckEnabled, onProgress })`
-  → `{ palette, frames, concept, iterations, verdict, score?, reasons? }`
-  - **メインの生成エントリポイント。** 「生成→ヒューリスティック検証→画像による
-    自己批評→（必要なら）フィードバックを添えて再生成」を `maxIterations` 回まで
-    自律的に繰り返す。`onProgress(event)` で各ステップの状況
-    （`generating` / `heuristic-checking` / `heuristic-failed` / `vision-reviewing` /
-    `vision-needs-fix` / `vision-review-error` / `done`）を通知する。
-  - `verdict` は `approved`（自己チェック合格）/ `approved-heuristic-only`
-    （画像レビューAPIが失敗したためヒューリスティック合格のみで確定）/
-    `needs_review`（上限到達、ユーザー確認が必要）/ `skipped`（自己チェック無効）。
-- `getSelfCheckEnabled()`/`setSelfCheckEnabled()`, `getMaxIterations()`/`setMaxIterations()`
-  — 自己チェックのON/OFFと最大イテレーション回数（1〜5、既定3）を `localStorage` で管理。
-- `STYLE_GUIDE` — ドット絵の品質ルール（シルエット優先・光源統一・色数厳守など）を
-  system prompt として全呼び出しに付与。
-
-### `qa.js`
-- `runHeuristicChecks({ width, height, palette, frames, loopMode })` → `string[]`（問題点の文章リスト）
-  - API呼び出し不要で即座に判定できる問題を検出: 全フレーム空白、パレット未使用過多、
-    フレームがほぼ空白、隣接フレームの差分が0（変化なし）または大きすぎる、
-    ループ指定時の始点・終点の不整合。
-- `pixelDiffRatio(a, b)` → 2つのフレーム（フラット配列）間で値が異なるピクセルの割合。
 
 ### `PixelEditor` (editor.js)
 - `setTool('pencil'|'eraser'|'eyedropper'|'bucket')` / `setColor(index)` / `setCellSize(px)`
@@ -97,10 +141,9 @@ main.js
 - `renderPaletteStrip(container, palette, activeIndex, onSelect)`
 - `renderFrameStrip(container, project, currentFrame, onSelect)`
 
-### `exporter.js`
+### `exporter.js`（ブラウザ版、Canvas使用）
 - `exportSpritesheetPng(project)` — 等倍・横並びのスプライトシートPNG（ダウンロード）
 - `getReviewSpritesheetBase64(project)` — 拡大・市松模様背景付きのスプライトシートを
-  base64 PNGとして返す（ダウンロードはしない）。AIの自己レビュー（`emit_critique`への
-  画像入力）専用。シート全体の幅が一定以内に収まるよう拡大率を動的に決める。
+  base64 PNGとして返す（ダウンロードはしない）。`server/pngRender.js` のNode版と同じレイアウト。
 - `exportAnimatedGif(project)` — gifenc による透過対応アニメーションGIF
 - `exportProjectJson(project)` / `parseProjectJson(text)` — プロジェクトの保存/復元
