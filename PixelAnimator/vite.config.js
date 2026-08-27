@@ -36,13 +36,16 @@ function claudeCliProxyPlugin() {
                     res.end('Method Not Allowed');
                     return;
                 }
+                const abortController = new AbortController();
+                req.on('close', () => abortController.abort());
                 try {
                     const payload = await readJsonBody(req);
-                    const result = await handleClaudeApi(payload);
+                    const result = await handleClaudeApi(payload, { signal: abortController.signal });
                     res.setHeader('content-type', 'application/json');
                     res.statusCode = 200;
                     res.end(JSON.stringify(result));
                 } catch (err) {
+                    if (res.writableEnded || res.destroyed) return;
                     res.setHeader('content-type', 'application/json');
                     res.statusCode = 500;
                     res.end(JSON.stringify({ error: err.message || String(err) }));

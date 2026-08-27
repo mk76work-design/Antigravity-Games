@@ -66,7 +66,7 @@ async function buildPrompt(userText, tmpDir) {
     return { promptText, hasImage: imagePaths.length > 0 };
 }
 
-export async function handleClaudeApi({ model, system, userText, tool, maxTokens }) {
+export async function handleClaudeApi({ model, system, userText, tool, maxTokens }, { signal } = {}) {
     if (!tool || !tool.name || !tool.input_schema) {
         throw new Error('内部エラー: toolスキーマが指定されていません。');
     }
@@ -97,8 +97,12 @@ export async function handleClaudeApi({ model, system, userText, tool, maxTokens
                 cwd: PACKAGE_ROOT,
                 timeout: CLI_TIMEOUT_MS,
                 maxBuffer: MAX_BUFFER,
+                signal,
             }));
         } catch (err) {
+            if (err.name === 'AbortError' || signal?.aborted) {
+                throw new Error('リクエストが中断されたため、claude CLIの呼び出しを中止しました。');
+            }
             const friendly = friendlyError(err, err.stderr);
             if (friendly) throw friendly;
             throw new Error(`Claude CLIの呼び出しに失敗しました: ${(err.stderr || err.message || '').toString().slice(0, 500)}`);

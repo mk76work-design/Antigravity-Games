@@ -280,6 +280,67 @@ emit_pixel_animation ツールを使って、上記の仕様を満たすドッ�
     };
 }
 
+// 直前の生成結果（実際のピクセルデータ）を「正解」として渡し、指摘された問題だけを
+// 直させる。フィードバックのテキストだけを頼りに白紙から再生成すると、直したはずの
+// 箇所が直らず同じ指摘を繰り返す・関係ない箇所まで変わってしまう、という実機テストで
+// 観測された問題への対処。ピクセル単位の正確な現状を見せることで、修正を的確にする。
+export async function refineAnimation({ description, width, height, frameCount, paletteLimit, loopMode, palette, frames, issues }) {
+    const tool = buildToolSchema(width, height, frameCount, paletteLimit);
+    const paletteText = palette.map((hex, i) => `${i}: ${hex}`).join(', ');
+    const framesText = frames
+        .map((flat, i) => {
+            const rows = [];
+            for (let y = 0; y < height; y++) rows.push(flat.slice(y * width, (y + 1) * width));
+            return `フレーム${i + 1}:\n${JSON.stringify(rows)}`;
+        })
+        .join('\n\n');
+    const issuesText = issues.map((s, i) => `${i + 1}. ${s}`).join('\n');
+
+    const userText = `${STYLE_GUIDE}
+
+# 元の発注内容
+${description}
+
+# 仕様
+- キャンバスサイズ: 幅 ${width}px × 高さ ${height}px
+- フレーム数: ちょうど ${frameCount} 枚
+- パレット上限: ${paletteLimit} 色
+
+# 現在のパレット（インデックス: 色）
+${paletteText}
+
+# 現在の全フレーム（修正前・実際のピクセルデータ。0始まりのpalette index、透明は-1）
+${framesText}
+
+# 修正すべき問題点
+${issuesText}
+
+上記の「現在の全フレーム」を出発点として、指摘された問題点だけをピクセル単位で修正してください。
+- 問題点に関係しないピクセルはできる限りそのまま維持すること（無関係な描き直しはしない）。
+- パレットも基本的にそのまま使うこと。どうしても必要な場合のみ新しい色を追加してよい（上限 ${paletteLimit} 色）。
+- 修正後の完全なアニメーション（全${frameCount}フレーム）を emit_pixel_animation ツールで出力すること。`;
+
+    const result = await callClaude({ system: STYLE_GUIDE, userText, tool });
+
+    if (!Array.isArray(result.palette) || result.palette.length === 0) {
+        throw new Error('AIエージェントの応答にパレットが含まれていません。');
+    }
+    if (!Array.isArray(result.frames) || result.frames.length !== frameCount) {
+        throw new Error(`AIエージェントの応答のフレーム数が仕様と一致しません（期待 ${frameCount} 枚）。`);
+    }
+
+    const fixedFrames = result.frames.map((f, i) => {
+        validateGrid(f.pixels, width, height, result.palette.length, `フレーム${i + 1}`);
+        return flattenGrid(f.pixels, width, height);
+    });
+
+    return {
+        palette: result.palette.slice(0, paletteLimit),
+        frames: fixedFrames,
+        concept: result.concept || '',
+    };
+}
+
 export async function regenerateFrame({ description, width, height, palette, neighborFrames, frameIndex }) {
     const tool = buildSingleFrameToolSchema(width, height);
 
@@ -345,14 +406,15 @@ emit_critique ツールで採点結果を返してください。`,
     return result;
 }
 
-function buildFeedbackText(reasons) {
-    return reasons.map((r, i) => `${i + 1}. ${r}`).join('\n');
-}
-
 // AIエージェントが「生成 → ヒューリスティック検証 → 画像による自己レビュー →
-// （必要なら）フィードバックを添えて再生成」を自律的に繰り返すパイプライン。
+// （必要なら）直前の実データを基にした修正」を自律的に繰り返すパイプライン。
 // ユーザーの確認・修正回数を減らすことが目的なので、途中経過は onProgress で
 // ログとして流すのみとし、人間の判断は最大イテレーション到達時にのみ求める。
+//
+// 2回目以降のイテレーションは、白紙から「フィードバック文つき説明」で再生成するのではなく、
+// 直前のピクセルデータをそのまま渡して問題点だけ直させる refineAnimation() を使う。
+// 実機テストで、テキストの指摘だけを頼りに毎回描き直すと同じ問題（フレーム間の重心ズレ等）
+// を再現し続けてしまうことが分かったため、正確な現状を見せて的確に直させる方式にした。
 export async function generateWithSelfCheck({
     description,
     width,
@@ -364,22 +426,27 @@ export async function generateWithSelfCheck({
     selfCheckEnabled = true,
     onProgress = () => {},
 }) {
-    let feedback = '';
+    let priorResult = null;
+    let issuesToFix = null;
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
         onProgress({ type: 'generating', iteration, maxIterations });
-        const composedDescription = feedback
-            ? `${description}\n\n# 直前の生成でレビューにより指摘された問題（今回は必ず修正すること）\n${feedback}`
-            : description;
 
-        const result = await generateAnimation({
-            description: composedDescription,
-            width,
-            height,
-            frameCount,
-            paletteLimit,
-            loopMode,
-        });
+        const result = priorResult && issuesToFix
+            ? await refineAnimation({
+                description,
+                width,
+                height,
+                frameCount,
+                paletteLimit,
+                loopMode,
+                palette: priorResult.palette,
+                frames: priorResult.frames,
+                issues: issuesToFix,
+            })
+            : await generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode });
+
+        priorResult = result;
         const project = { width, height, fps: 8, loopMode, palette: result.palette, frames: result.frames };
         const base = { palette: result.palette, frames: result.frames, concept: result.concept, iterations: iteration };
 
@@ -394,7 +461,7 @@ export async function generateWithSelfCheck({
             const isLast = iteration >= maxIterations;
             onProgress({ type: 'heuristic-failed', iteration, maxIterations, issues: heuristicIssues, willRetry: !isLast });
             if (!isLast) {
-                feedback = buildFeedbackText(heuristicIssues);
+                issuesToFix = heuristicIssues;
                 continue;
             }
             return { ...base, verdict: 'needs_review', reasons: heuristicIssues };
@@ -421,12 +488,12 @@ export async function generateWithSelfCheck({
         const isLast = iteration >= maxIterations;
         onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, issues: critique.issues, willRetry: !isLast });
         if (!isLast) {
-            feedback = buildFeedbackText(reasons);
+            issuesToFix = reasons;
             continue;
         }
         return { ...base, verdict: 'needs_review', reasons, score: critique.score };
     }
 
-    // ここには到達しない想定（ループ内で必ず return する）が、念のため。
+    // ここには到達しない想定(ループ内で必ず return する)が、念のため。
     throw new Error('自己チェックパイプラインが異常終了しました。');
 }
