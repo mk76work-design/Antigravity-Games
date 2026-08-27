@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const execFileAsync = promisify(execFile);
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CLI_TIMEOUT_MS = 5 * 60 * 1000;
+const CLI_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 function friendlyError(err, stderr) {

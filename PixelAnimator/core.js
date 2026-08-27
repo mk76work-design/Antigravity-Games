@@ -18,9 +18,26 @@ export const DEFAULT_MAX_ITERATIONS = 3;
 // ドット絵の「品質」を左右する演出ルール。
 // Documents/Sakurai_Knowledge/F_Graphics.md の思想（光と影の重視・視認性優先・
 // 過剰なディテールの排除）をドット絵向けに翻案したもの。
+//
+// 最優先事項: 「ちゃんとドット絵に見えること」。技術的にスキーマを満たしていても、
+// ランダムなノイズの寄せ集めのように見えたり、意図が読めない配置になっていては
+// 意味がない。この一点を他の何よりも重視すること。
 export const STYLE_GUIDE = `あなたは熟練のドット絵アニメーター（ピクセルアーティスト）です。
-以下のルールを厳守して、小さな解像度でも「読める」高品質なドット絵アニメーションを設計してください。
+最も重要なことは「本物のドット絵ゲームのスプライトに見えること」です。技術仕様
+（サイズ・フレーム数・色数）を満たすことよりも、この見た目の説得力を最優先してください。
 
+## 「ドット絵らしく見える」ための絶対ルール（最優先）
+- 孤立したピクセル（隣接する4方向のどこにも同じ・近い色がない1px単独の点）を作らない。
+  これは最も「ドット絵に見えない・ノイズっぽい」原因になる。意図的なハイライトの1点は
+  例外だが、それ以外の孤立ピクセルは禁止。
+- 塗り面は最低でも2〜3ピクセル程度のまとまった塊で構成し、線は連続したピクセルの並びで
+  描く（ギザギザに途切れた線や、飛び石状の配置は不可）。
+- シルエットの輪郭線は「意図的な階段状（ピクセル特有のジグザグ）」にし、なめらかに
+  見せようとして中間色を無秩序に足さない（アンチエイリアスのかけすぎはドット絵らしさを壊す）。
+- 各パーツ（頭・胴体・手足・装飾など）は面としてまとまり、全体で1つの塊として
+  シルエットが読めること。バラバラのパーツの寄せ集めに見えてはいけない。
+
+## その他の演出ルール
 - シルエット最優先: 輪郭だけでモチーフが分かるよう、ネガティブスペースを意識する。
 - 光源を1つに決め、明部・陰影・アンビエントオクルージョン(接地影)を最小限のトーンで表現する。
 - 色数は指定された上限以下に収め、同一トーン内のグラデーション（バンディング回避のための中間色）を活用する。
@@ -109,6 +126,12 @@ export function buildCritiqueToolSchema() {
         input_schema: {
             type: 'object',
             properties: {
+                pixelArtAuthenticity: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 10,
+                    description: '最重要項目。「本物のレトロゲーム/インディーゲームのドット絵スプライトに見えるか」の評価（10が最高）。孤立ノイズピクセル・意図が読めない配置・アンチエイリアスのかけすぎで輪郭がぼやけている・パーツがバラバラに見える、などがあれば厳しく減点する。技術仕様（サイズ/フレーム数/色数）を満たしていても、これが低ければ全体は不合格。',
+                },
                 score: {
                     type: 'integer',
                     minimum: 1,
@@ -118,7 +141,7 @@ export function buildCritiqueToolSchema() {
                 verdict: {
                     type: 'string',
                     enum: ['approve', 'needs_fix'],
-                    description: 'スコアが7以上かつ致命的な問題がなければ approve。それ以外は needs_fix。',
+                    description: 'pixelArtAuthenticity と score の両方が7以上かつ致命的な問題がなければ approve。どちらか一方でも7未満なら needs_fix。',
                 },
                 issues: {
                     type: 'array',
@@ -133,7 +156,7 @@ export function buildCritiqueToolSchema() {
                     },
                 },
             },
-            required: ['score', 'verdict', 'issues'],
+            required: ['pixelArtAuthenticity', 'score', 'verdict', 'issues'],
         },
     };
 }
@@ -182,7 +205,27 @@ function parseAnimationResult(result, { width, height, frameCount, paletteLimit 
     };
 }
 
-export async function generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, callClaude }) {
+// キャラクターセット（同一キャラの複数アクション）を作る際、既に確定した基準デザイン
+// （1枚のリファレンスポーズ）を後続のアクション生成に見せて、配色・プロポーション・
+// 画風の一貫性を保たせるためのブロック。reference が渡されなければ何も付与しない。
+function buildReferenceBlock({ palette, pixels, width, height } = {}) {
+    if (!palette || !pixels) return '';
+    const rows = [];
+    for (let y = 0; y < height; y++) rows.push(pixels.slice(y * width, (y + 1) * width));
+    const paletteText = palette.map((hex, i) => `${i}: ${hex}`).join(', ');
+    return `
+
+# キャラクターの基準デザイン（必ず一貫性を保つこと）
+これは同一キャラクターの別アクションです。以下の基準ポーズと同じ配色・プロポーション・
+画風を維持してください。パレットは基本的にそのまま使い、新色は必要最小限にとどめること
+（描くモチーフ自体は基準ポーズをそのままなぞるのではなく、指定されたアクションの動きに
+合わせて自然に変形・動かしてよい）。
+基準パレット（インデックス: 色）: ${paletteText}
+基準ポーズのピクセルグリッド（幅${width}×高さ${height}、palette index、透明は-1）:
+${JSON.stringify(rows)}`;
+}
+
+export async function generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, reference, callClaude }) {
     const tool = buildToolSchema(width, height, frameCount, paletteLimit);
     const loopHint = {
         loop: 'このアニメーションはループ再生される。最終フレームから先頭フレームへ違和感なくつながるようにする。',
@@ -199,7 +242,7 @@ ${description}
 - キャンバスサイズ: 幅 ${width}px × 高さ ${height}px
 - フレーム数: ちょうど ${frameCount} 枚
 - パレット上限: ${paletteLimit} 色
-- ${loopHint}
+- ${loopHint}${buildReferenceBlock(reference)}
 
 emit_pixel_animation ツールを使って、上記の仕様を満たすドット絵アニメーションを出力してください。`;
 
@@ -298,7 +341,10 @@ ${description}
 - ループ種類: ${loopMode}
 
 添付画像は、生成されたドット絵アニメーションのフレームを左から右へ順番に並べたスプライトシート
-（拡大表示・透明部分は市松模様）です。これを自分自身の作品として厳しく採点してください。特に:
+（拡大表示・透明部分は市松模様）です。これを自分自身の作品として厳しく採点してください。
+**最優先で確認すること: 本物のドット絵ゲームのスプライトに見えるか（pixelArtAuthenticity）。**
+孤立したノイズピクセル、意図の読めない配置、輪郭のぼやけ、パーツがバラバラに見える、と
+いった問題がないか拡大して細部まで確認すること。それに加えて:
 - 発注内容のモチーフが見て分かるか
 - シルエットの視認性
 - フレーム間で同一モチーフとして一貫しているか（プロポーションや位置が破綻していないか）
@@ -313,9 +359,27 @@ emit_critique ツールで採点結果を返してください。`,
     ];
 
     const result = await callClaude({ system: STYLE_GUIDE, userText, tool, maxTokens: 2000 });
-    if (typeof result.score !== 'number' || !['approve', 'needs_fix'].includes(result.verdict) || !Array.isArray(result.issues)) {
+    if (
+        typeof result.pixelArtAuthenticity !== 'number'
+        || typeof result.score !== 'number'
+        || !['approve', 'needs_fix'].includes(result.verdict)
+        || !Array.isArray(result.issues)
+    ) {
         throw new Error('AIエージェントのレビュー応答が不正な形式です。');
     }
+
+    // モデルがプロンプトの指示（両方7以上でなければapproveしない）を守らなかった場合の
+    // 保険として、コード側でも同じ基準を強制する。
+    if (result.verdict === 'approve' && (result.pixelArtAuthenticity < 7 || result.score < 7)) {
+        result.verdict = 'needs_fix';
+        if (result.issues.length === 0) {
+            result.issues = [{
+                problem: `ドット絵らしさの評価が低いにもかかわらず承認判定でした（pixelArtAuthenticity: ${result.pixelArtAuthenticity}/10, score: ${result.score}/10）。`,
+                suggestion: '孤立したノイズピクセル・意図の読めない配置・輪郭のぼやけがないか見直し、本物のドット絵スプライトに見えるよう整えてください。',
+            }];
+        }
+    }
+
     return result;
 }
 
@@ -338,6 +402,7 @@ export async function generateWithSelfCheck({
     maxIterations = DEFAULT_MAX_ITERATIONS,
     selfCheckEnabled = true,
     onProgress = () => {},
+    reference,
     callClaude,
     renderReviewImage,
 }) {
@@ -360,7 +425,7 @@ export async function generateWithSelfCheck({
                 issues: issuesToFix,
                 callClaude,
             })
-            : await generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, callClaude });
+            : await generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, reference, callClaude });
 
         priorResult = result;
         const project = { width, height, fps: 8, loopMode, palette: result.palette, frames: result.frames };
@@ -396,18 +461,18 @@ export async function generateWithSelfCheck({
         }
 
         if (critique.verdict === 'approve') {
-            onProgress({ type: 'done', iteration, maxIterations, verdict: 'approved', score: critique.score });
-            return { ...base, verdict: 'approved', score: critique.score };
+            onProgress({ type: 'done', iteration, maxIterations, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity });
+            return { ...base, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity };
         }
 
         const reasons = critique.issues.map((i) => `${i.problem} → ${i.suggestion}`);
         const isLast = iteration >= maxIterations;
-        onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, issues: critique.issues, willRetry: !isLast });
+        onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, issues: critique.issues, willRetry: !isLast });
         if (!isLast) {
             issuesToFix = reasons;
             continue;
         }
-        return { ...base, verdict: 'needs_review', reasons, score: critique.score };
+        return { ...base, verdict: 'needs_review', reasons, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity };
     }
 
     // ここには到達しない想定(ループ内で必ず return する)が、念のため。

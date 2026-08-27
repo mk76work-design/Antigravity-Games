@@ -43,11 +43,15 @@ main.js（ブラウザUI・人間の手直し用）
 ## 主要クラス・関数
 
 ### `core.js`（環境非依存の本体ロジック）
-- `generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, callClaude })`
+- `generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, reference?, callClaude })`
   → `{ palette, frames, concept }`
   - `emit_pixel_animation` 相当のJSON Schemaを注入された `callClaude` に渡し、
     パレット配列とフレームごとの2次元ピクセルグリッドを取得・検証・フラット化する。
   - 単発の生成関数。通常はこれを直接使わず `generateWithSelfCheck()` 経由で呼ぶ。
+  - `reference`（省略可）: `{ palette, pixels, width, height }`。渡すと、既に確定した
+    別アニメーション（基準ポーズ等）と同じ配色・プロポーションを保つよう
+    プロンプトに埋め込む（`buildReferenceBlock()`）。`cli.js character` サブコマンドが
+    キャラクター一貫性を保つために使う。
 - `refineAnimation({ description, width, height, frameCount, paletteLimit, loopMode, palette, frames, issues, callClaude })`
   → `{ palette, frames, concept }`
   - 直前の実ピクセルデータをそのまま見せ、指摘箇所だけをピクセル単位で修正させる。
@@ -57,16 +61,23 @@ main.js（ブラウザUI・人間の手直し用）
   - `emit_single_frame` 相当のスキーマを使い、既存パレット・隣接フレームとの一貫性を
     保って1枚だけ再生成する（ブラウザUIで「このフレームだけ再生成」を押したときに使用）。
 - `critiqueAnimation({ description, width, height, frameCount, loopMode, imageBase64, callClaude })`
-  → `{ score, verdict, issues }`
+  → `{ pixelArtAuthenticity, score, verdict, issues }`
   - `emit_critique` 相当のスキーマを使い、スプライトシート画像をClaude CLIの
     Readツール経由で読ませて自己採点させる。
-- `generateWithSelfCheck({ description, width, height, frameCount, paletteLimit, loopMode, maxIterations, selfCheckEnabled, onProgress, callClaude, renderReviewImage })`
+  - `pixelArtAuthenticity`（1〜10）は「本物のドット絵スプライトに見えるか」の最優先評価軸。
+    `pixelArtAuthenticity` と `score` の**両方**が7以上でなければ `approve` にならない
+    （プロンプトでモデルに指示し、さらにコード側でも
+    `verdict==='approve' && (pixelArtAuthenticity<7 || score<7)` の場合は
+    強制的に `needs_fix` へ上書きする二重のガード）。
+- `generateWithSelfCheck({ description, width, height, frameCount, paletteLimit, loopMode, maxIterations, selfCheckEnabled, onProgress, reference?, callClaude, renderReviewImage })`
   → `{ palette, frames, concept, iterations, verdict, score?, reasons? }`
   - **メインの生成エントリポイント。** 「生成→ヒューリスティック検証→画像による
     自己批評→（必要なら）直前データを見せての修正」を `maxIterations` 回まで
     自律的に繰り返す。`onProgress(event)` で各ステップの状況
     （`generating` / `heuristic-checking` / `heuristic-failed` / `vision-reviewing` /
     `vision-needs-fix` / `vision-review-error` / `done`）を通知する。
+  - `reference`（省略可）は初回の `generateAnimation` 呼び出しにのみ渡される
+    （2回目以降の `refineAnimation` は直前の実データ自体がすでに参照として機能するため不要）。
   - `verdict` は `approved`（自己チェック合格）/ `approved-heuristic-only`
     （画像レビューが失敗したためヒューリスティック合格のみで確定）/
     `needs_review`（上限到達、確認が必要）/ `skipped`（自己チェック無効）。
@@ -74,12 +85,30 @@ main.js（ブラウザUI・人間の手直し用）
   出力のJSON Schema。`STYLE_GUIDE` — ドット絵の品質ルール（system promptとして全呼び出しに付与）。
 
 ### `cli.js`
-- サブコマンドは `generate` のみ（V1）。`--prompt`/`--out` が必須、その他は
+2つのサブコマンドを持つ。共通ヘルパー: `buildOnProgress()`（進行状況ログ整形）,
+`writeProjectFiles()`（PNG/GIF/JSON書き出し）, `parsePositiveInt()`/`parseLoopMode()`（引数検証）。
+
+- **`generate`** — 単発のアニメーションを1本生成。`--prompt`/`--out` が必須、その他は
   `--width`/`--height`/`--frames`/`--palette`/`--loop`/`--fps`/`--model`/
   `--max-iterations`/`--no-self-check`/`--quiet`。
-- stdout には実行結果のJSON（`verdict`/`score`/`iterations`/`reasons`/`concept`/`files`）
-  のみを出力し、進行状況ログは全て stderr に流す（エージェントがパースしやすいように）。
-- 終了コード: `0`=合格またはスキップ、`1`=実行時エラー、`2`=生成完了だが要確認（`needs_review`）。
+  stdout には実行結果のJSON（`verdict`/`score`/`iterations`/`reasons`/`concept`/`files`）
+  のみを出力し、進行状況ログは全て stderr に流す。
+  終了コード: `0`=合格またはスキップ、`1`=実行時エラー、`2`=要確認（`needs_review`）。
+
+- **`character`** — 同一キャラクターの複数アクションセットをまとめて生成。
+  `--description`/`--actions`（カンマ区切り）/`--out-dir` が必須。`--frames` は
+  単一値（全アクション共通）またはカンマ区切り（`--actions`と同数、アクションごとに
+  フレーム数を変える）のどちらでも指定できる。
+  1. まず `generateWithSelfCheck({ frameCount: 1, loopMode: 'once', ... })` で
+     基準ポーズ（1枚絵）を確定させ、`<out-dir>/reference.png`（+`.json`、GIFは書き出さない）
+     として保存する。
+  2. 各アクションについて、確定した基準ポーズを `reference` として
+     `generateWithSelfCheck()` に渡しながら生成し、`<out-dir>/<action>.png/.gif/.json`
+     として保存する（アクションごとに独立した自己チェックループが走る）。
+  3. 全体のサマリー（基準デザインの結果 + 各アクションの結果）を
+     `<out-dir>/character.json` に書き出し、同じ内容をstdoutにも出力する。
+  終了コード: `0`=全て合格、`1`=いずれかのアクションで実行時エラー、
+  `2`=エラーはないが1件以上 `needs_review`。
 
 ### `server/agentCore.js`
 - `generateWithSelfCheck({ model, ...params })` — `core.generateWithSelfCheck()` に
