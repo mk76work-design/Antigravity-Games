@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const execFileAsync = promisify(execFile);
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CLI_TIMEOUT_MS = 10 * 60 * 1000;
+const CLI_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 function friendlyError(err, stderr) {
@@ -93,12 +93,18 @@ export async function handleClaudeApi({ model, system, userText, tool, maxTokens
         let stdout;
         let stderr;
         try {
-            ({ stdout, stderr } = await execFileAsync('claude', args, {
+            const execPromise = execFileAsync('claude', args, {
                 cwd: PACKAGE_ROOT,
                 timeout: CLI_TIMEOUT_MS,
                 maxBuffer: MAX_BUFFER,
                 signal,
-            }));
+            });
+            // stdinを繋いだまま放置すると、claude CLIが「標準入力から追加の指示が
+            // 来るかもしれない」と数秒待ってから警告を出しつつ処理を続ける（実機で
+            // 実際に不安定化を確認）。プロンプトは-p引数で渡し切っているので、
+            // 即座にEOFを送ってこの待ち時間・不確実性をなくす。
+            execPromise.child?.stdin?.end();
+            ({ stdout, stderr } = await execPromise);
         } catch (err) {
             if (err.name === 'AbortError' || signal?.aborted) {
                 throw new Error('リクエストが中断されたため、claude CLIの呼び出しを中止しました。');

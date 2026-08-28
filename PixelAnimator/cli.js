@@ -45,10 +45,12 @@ function printUsage() {
 オプション:
   --prompt <text>              必須。どんなアニメーションが欲しいかの説明。
   --out <path>                 必須。出力ファイルの接頭辞。
-  --width <px>                 キャンバス幅（デフォルト 24）
+  --width <px>                 キャンバス幅（デフォルト 32。スーパーファミコン級の
+                                 密度のシェーディングを狙うなら32px以上を推奨）
   --height <px>                キャンバス高さ（デフォルト --width と同じ）
   --frames <n>                 フレーム数（デフォルト 6）
-  --palette <n>                パレット上限色数（デフォルト 12）
+  --palette <n>                パレット上限色数（デフォルト 16。主要パーツごとに
+                                 3〜4階調のグラデーションを持たせるための目安）
   --loop <loop|pingpong|once>  ループ種類（デフォルト loop）
   --fps <n>                    再生FPS、JSON書き出し用（デフォルト 8）
   --model <name>                使用モデル（デフォルト ${DEFAULT_MODEL}）
@@ -109,10 +111,10 @@ function buildOnProgress({ quiet, logPrefix = '' }) {
                 log(`⚠️  ${tag} 画像レビューに失敗: ${event.message}`);
                 break;
             case 'vision-needs-fix':
-                log(`📝 ${tag} 自己採点 ${event.score}/10（ドット絵らしさ ${event.pixelArtAuthenticity}/10）→ 修正: ${event.issues.map((i) => i.problem).join(' / ')}`);
+                log(`📝 ${tag} 自己採点 ${event.score}/10（ドット絵らしさ ${event.pixelArtAuthenticity}/10、シェーディング ${event.shadingQuality}/10）→ 修正: ${event.issues.map((i) => i.problem).join(' / ')}`);
                 break;
             case 'done':
-                if (event.verdict === 'approved') log(`✅ ${tag} 自己チェック合格（スコア ${event.score}/10、ドット絵らしさ ${event.pixelArtAuthenticity}/10）。`);
+                if (event.verdict === 'approved') log(`✅ ${tag} 自己チェック合格（スコア ${event.score}/10、ドット絵らしさ ${event.pixelArtAuthenticity}/10、シェーディング ${event.shadingQuality}/10）。`);
                 break;
         }
     };
@@ -178,10 +180,10 @@ async function runGenerateCommand(rest) {
             options: {
                 prompt: { type: 'string' },
                 out: { type: 'string' },
-                width: { type: 'string', default: '24' },
+                width: { type: 'string', default: '32' },
                 height: { type: 'string' },
                 frames: { type: 'string', default: '6' },
-                palette: { type: 'string', default: '12' },
+                palette: { type: 'string', default: '16' },
                 loop: { type: 'string', default: 'loop' },
                 fps: { type: 'string', default: '8' },
                 model: { type: 'string', default: DEFAULT_MODEL },
@@ -245,6 +247,7 @@ async function runGenerateCommand(rest) {
         verdict: result.verdict,
         score: result.score ?? null,
         pixelArtAuthenticity: result.pixelArtAuthenticity ?? null,
+        shadingQuality: result.shadingQuality ?? null,
         iterations: result.iterations,
         reasons: result.reasons ?? [],
         concept: result.concept,
@@ -274,10 +277,10 @@ async function runCharacterCommand(rest) {
                 description: { type: 'string' },
                 actions: { type: 'string' },
                 'out-dir': { type: 'string' },
-                width: { type: 'string', default: '24' },
+                width: { type: 'string', default: '32' },
                 height: { type: 'string' },
                 frames: { type: 'string', default: '6' },
-                palette: { type: 'string', default: '12' },
+                palette: { type: 'string', default: '16' },
                 loop: { type: 'string', default: 'loop' },
                 fps: { type: 'string', default: '8' },
                 model: { type: 'string', default: DEFAULT_MODEL },
@@ -413,6 +416,7 @@ async function runCharacterCommand(rest) {
             verdict: result.verdict,
             score: result.score ?? null,
             pixelArtAuthenticity: result.pixelArtAuthenticity ?? null,
+            shadingQuality: result.shadingQuality ?? null,
             iterations: result.iterations,
             reasons: result.reasons ?? [],
             concept: result.concept,
@@ -435,6 +439,7 @@ async function runCharacterCommand(rest) {
             verdict: refResult.verdict,
             score: refResult.score ?? null,
             pixelArtAuthenticity: refResult.pixelArtAuthenticity ?? null,
+            shadingQuality: refResult.shadingQuality ?? null,
             iterations: refResult.iterations,
             concept: refResult.concept,
             files: referenceFiles,

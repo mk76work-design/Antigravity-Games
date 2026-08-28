@@ -19,12 +19,18 @@ export const DEFAULT_MAX_ITERATIONS = 3;
 // Documents/Sakurai_Knowledge/F_Graphics.md の思想（光と影の重視・視認性優先・
 // 過剰なディテールの排除）をドット絵向けに翻案したもの。
 //
+// 目標クオリティ: スーパーファミコン(16bit)時代のRPG/アクションゲームの
+// キャラクタースプライト水準。単色べた塗り＋1色シャドウの「ファミコン以下」の
+// 品質ではなく、複数階調のシェーディングとカラーリニアートを使いこなす、
+// 当時のトップクラスのドッターが手がけたスプライトに匹敵する仕上がりを狙う。
+//
 // 最優先事項: 「ちゃんとドット絵に見えること」。技術的にスキーマを満たしていても、
 // ランダムなノイズの寄せ集めのように見えたり、意図が読めない配置になっていては
 // 意味がない。この一点を他の何よりも重視すること。
 export const STYLE_GUIDE = `あなたは熟練のドット絵アニメーター（ピクセルアーティスト）です。
-最も重要なことは「本物のドット絵ゲームのスプライトに見えること」です。技術仕様
-（サイズ・フレーム数・色数）を満たすことよりも、この見た目の説得力を最優先してください。
+目標は「スーパーファミコン(16bit)時代の高品質なキャラクタースプライト」に匹敵する
+仕上がりです。技術仕様（サイズ・フレーム数・色数）を満たすことよりも、この見た目の
+説得力を最優先してください。
 
 ## 「ドット絵らしく見える」ための絶対ルール（最優先）
 - 孤立したピクセル（隣接する4方向のどこにも同じ・近い色がない1px単独の点）を作らない。
@@ -37,14 +43,45 @@ export const STYLE_GUIDE = `あなたは熟練のドット絵アニメーター�
 - 各パーツ（頭・胴体・手足・装飾など）は面としてまとまり、全体で1つの塊として
   シルエットが読めること。バラバラのパーツの寄せ集めに見えてはいけない。
 
+## スーパーファミコン水準のシェーディング（クオリティの核心）
+「ファミコン以下」に見える最大の原因は、1色ベタ塗り＋1トーンの影だけで済ませてしまう
+ことです。以下を徹底し、単色フラットな塗りを避けてください。
+- 主要な色（肌・服・髪・装飾等）はそれぞれ**最低3〜4階調**で構成する:
+  最明部(ハイライト) → ベーストーン → シャドウ → 深いシャドウ/アンビエントオクルージョン。
+  「明るい面・普通の面・暗い面」を単純に塗り分けるのではなく、球体や円柱を意識して
+  光源からの距離に応じてなだらかに階調を変化させ、立体感（フォルムシェーディング）を出す。
+- 輪郭線は原則として黒一色にしない。**カラーリニアート（selective outlining）**を基本とし、
+  各パーツの色相を保ったまま彩度・明度を落とした濃い色を輪郭線に使う（例: 赤い服の輪郭は
+  黒ではなく暗い赤茶）。純粋な黒は、目・瞳孔・最も深い影・パーツ同士の境界を強調したい
+  箇所などキーとなる部分にのみ使う。
+- ハイライトは光源方向に沿って一貫させ、面ごとの向き（正面/側面/上面）で強さを変える。
+  金属・革・布などの質感差も、ハイライトの鋭さ（点状か面状か）で描き分けるとよい。
+- 大きな面のグラデーションでバンディングが目立つ場合は、荒すぎないパターン化した
+  ディザリング（市松や斜めパターン）を階調の境目に薄く使ってよい。ただし16px四方以下の
+  小さなキャンバスや、小さなパーツには使わない（潰れて汚く見えるため）。
+- 接地影・アンビエントオクルージョン（パーツ同士が重なる部分の陰）を必ず入れ、
+  キャラクターが平面ではなく立体として地面に立っている説得力を出す。
+
+## アニメーションの質（12原則を意識する）
+- タメ（アンティシペーション）: 動作の直前に逆方向へわずかに沈み込む・溜めるフレームを
+  入れ、動きの予備動作を表現する。
+- フォロースルー・追従: 髪・マント・耳・武器・装飾など体の主要部位より軽い/柔らかい
+  パーツは、本体の動きに1〜2フレーム遅れてついてくるようにし、単純な剛体の平行移動に
+  しない。
+- イーズイン/イーズアウト: 動きの始まりと終わりは変化量を小さく、中間は変化量を大きくし、
+  一定速度の機械的な動きに見せない（フレーム数が許す範囲で）。
+- 推奨フレーム数の目安: 待機(idle)は呼吸や瞬きが伝わる3〜4枚以上、歩行は片脚ずつの
+  接地・振り出しが分かる6〜8枚、攻撃等の一撃動作はタメ・発生・持続・戻りが分かる
+  4枚以上を目安にする（指定されたフレーム数の範囲内で、動きの説得力を最大化すること）。
+- 重心（頭・胴体の基準位置）は指定された動き以外でガタつかせない。フレーム間で
+  意図しない左右・上下のドリフトを起こさない。
+
 ## その他の演出ルール
 - シルエット最優先: 輪郭だけでモチーフが分かるよう、ネガティブスペースを意識する。
-- 光源を1つに決め、明部・陰影・アンビエントオクルージョン(接地影)を最小限のトーンで表現する。
-- 色数は指定された上限以下に収め、同一トーン内のグラデーション（バンディング回避のための中間色）を活用する。
-- ディザリングは多用しない。小さい面積では単色の方が視認性が高い。
-- アニメーションはタメ（アンティシペーション）とオーバーシュートを意識し、フレーム間の動きが自然につながるようにする。
+- 色数は指定された上限以下に収める。上記のシェーディング階調を優先的に色数へ割り当てる
+  （装飾の細部より、主要パーツの階調を充実させることを優先する）。
 - 中心のモチーフ以外の背景・装飾は最小限にし、動きの主役から視線を逸らさない。
-- 各フレームは同じキャンバスサイズ・同じパレットを使い、キャラクターの軸（重心）がガタつかないようにする。`;
+- 各フレームは同じキャンバスサイズ・同じパレットを使う。`;
 
 export function buildToolSchema(width, height, frameCount, paletteLimit) {
     return {
@@ -132,6 +169,12 @@ export function buildCritiqueToolSchema() {
                     maximum: 10,
                     description: '最重要項目。「本物のレトロゲーム/インディーゲームのドット絵スプライトに見えるか」の評価（10が最高）。孤立ノイズピクセル・意図が読めない配置・アンチエイリアスのかけすぎで輪郭がぼやけている・パーツがバラバラに見える、などがあれば厳しく減点する。技術仕様（サイズ/フレーム数/色数）を満たしていても、これが低ければ全体は不合格。',
                 },
+                shadingQuality: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 10,
+                    description: 'スーパーファミコン(16bit)水準のシェーディング表現力の評価（10が最高）。主要パーツ（肌・服・髪等）に最低3〜4階調のグラデーション（ハイライト/ベース/シャドウ/深いシャドウ）があるか、輪郭線が黒一色べったりではなくカラーリニアート（色相を保った暗い輪郭）を使えているか、光源に沿った立体的な陰影（フォルムシェーディング）になっているかを厳しく評価する。単色ベタ塗り＋1トーンの影だけの「ファミコン以下」の表現は低評価にすること。',
+                },
                 score: {
                     type: 'integer',
                     minimum: 1,
@@ -141,7 +184,7 @@ export function buildCritiqueToolSchema() {
                 verdict: {
                     type: 'string',
                     enum: ['approve', 'needs_fix'],
-                    description: 'pixelArtAuthenticity と score の両方が7以上かつ致命的な問題がなければ approve。どちらか一方でも7未満なら needs_fix。',
+                    description: 'pixelArtAuthenticity・shadingQuality・score の3つ全てが7以上かつ致命的な問題がなければ approve。いずれか1つでも7未満なら needs_fix。',
                 },
                 issues: {
                     type: 'array',
@@ -156,7 +199,7 @@ export function buildCritiqueToolSchema() {
                     },
                 },
             },
-            required: ['pixelArtAuthenticity', 'score', 'verdict', 'issues'],
+            required: ['pixelArtAuthenticity', 'shadingQuality', 'score', 'verdict', 'issues'],
         },
     };
 }
@@ -342,9 +385,16 @@ ${description}
 
 添付画像は、生成されたドット絵アニメーションのフレームを左から右へ順番に並べたスプライトシート
 （拡大表示・透明部分は市松模様）です。これを自分自身の作品として厳しく採点してください。
-**最優先で確認すること: 本物のドット絵ゲームのスプライトに見えるか（pixelArtAuthenticity）。**
-孤立したノイズピクセル、意図の読めない配置、輪郭のぼやけ、パーツがバラバラに見える、と
-いった問題がないか拡大して細部まで確認すること。それに加えて:
+**最優先で確認すること（この2点だけで合否が決まると言ってよい）:**
+1. **pixelArtAuthenticity** — 本物のドット絵ゲームのスプライトに見えるか。孤立したノイズ
+   ピクセル、意図の読めない配置、輪郭のぼやけ、パーツがバラバラに見える、といった問題が
+   ないか拡大して細部まで確認すること。
+2. **shadingQuality** — スーパーファミコン(16bit)水準のシェーディングになっているか。
+   主要パーツに3〜4階調のグラデーションがあるか、輪郭線が黒一色べったりでなくカラー
+   リニアートになっているか、光源に沿った立体的な陰影か。単色ベタ塗り＋1トーンの影
+   だけの「ファミコン以下」の表現になっていないか厳しく見ること。
+
+それに加えて:
 - 発注内容のモチーフが見て分かるか
 - シルエットの視認性
 - フレーム間で同一モチーフとして一貫しているか（プロポーションや位置が破綻していないか）
@@ -361,6 +411,7 @@ emit_critique ツールで採点結果を返してください。`,
     const result = await callClaude({ system: STYLE_GUIDE, userText, tool, maxTokens: 2000 });
     if (
         typeof result.pixelArtAuthenticity !== 'number'
+        || typeof result.shadingQuality !== 'number'
         || typeof result.score !== 'number'
         || !['approve', 'needs_fix'].includes(result.verdict)
         || !Array.isArray(result.issues)
@@ -368,14 +419,14 @@ emit_critique ツールで採点結果を返してください。`,
         throw new Error('AIエージェントのレビュー応答が不正な形式です。');
     }
 
-    // モデルがプロンプトの指示（両方7以上でなければapproveしない）を守らなかった場合の
+    // モデルがプロンプトの指示（3つとも7以上でなければapproveしない）を守らなかった場合の
     // 保険として、コード側でも同じ基準を強制する。
-    if (result.verdict === 'approve' && (result.pixelArtAuthenticity < 7 || result.score < 7)) {
+    if (result.verdict === 'approve' && (result.pixelArtAuthenticity < 7 || result.shadingQuality < 7 || result.score < 7)) {
         result.verdict = 'needs_fix';
         if (result.issues.length === 0) {
             result.issues = [{
-                problem: `ドット絵らしさの評価が低いにもかかわらず承認判定でした（pixelArtAuthenticity: ${result.pixelArtAuthenticity}/10, score: ${result.score}/10）。`,
-                suggestion: '孤立したノイズピクセル・意図の読めない配置・輪郭のぼやけがないか見直し、本物のドット絵スプライトに見えるよう整えてください。',
+                problem: `品質評価が低いにもかかわらず承認判定でした（pixelArtAuthenticity: ${result.pixelArtAuthenticity}/10, shadingQuality: ${result.shadingQuality}/10, score: ${result.score}/10）。`,
+                suggestion: '孤立したノイズピクセル・意図の読めない配置・輪郭のぼやけがないか、また主要パーツに3〜4階調のグラデーションとカラーリニアートがあるか見直し、スーパーファミコン水準のスプライトに見えるよう整えてください。',
             }];
         }
     }
@@ -461,18 +512,18 @@ export async function generateWithSelfCheck({
         }
 
         if (critique.verdict === 'approve') {
-            onProgress({ type: 'done', iteration, maxIterations, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity });
-            return { ...base, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity };
+            onProgress({ type: 'done', iteration, maxIterations, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality });
+            return { ...base, verdict: 'approved', score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality };
         }
 
         const reasons = critique.issues.map((i) => `${i.problem} → ${i.suggestion}`);
         const isLast = iteration >= maxIterations;
-        onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, issues: critique.issues, willRetry: !isLast });
+        onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality, issues: critique.issues, willRetry: !isLast });
         if (!isLast) {
             issuesToFix = reasons;
             continue;
         }
-        return { ...base, verdict: 'needs_review', reasons, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity };
+        return { ...base, verdict: 'needs_review', reasons, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality };
     }
 
     // ここには到達しない想定(ループ内で必ず return する)が、念のため。

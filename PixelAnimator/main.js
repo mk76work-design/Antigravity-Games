@@ -99,12 +99,12 @@ function handleAgentProgress(event) {
             appendLog(`⚠️ ${tag} 画像レビューに失敗（機械的チェックの合格分を採用）: ${event.message}`, 'warn');
             break;
         case 'vision-needs-fix':
-            appendLog(`📝 ${tag} 自己採点 ${event.score}/10（ドット絵らしさ ${event.pixelArtAuthenticity}/10）→ 修正: ${event.issues.map((i) => i.problem).join(' / ')}`, 'warn');
+            appendLog(`📝 ${tag} 自己採点 ${event.score}/10（ドット絵らしさ ${event.pixelArtAuthenticity}/10、シェーディング ${event.shadingQuality}/10）→ 修正: ${event.issues.map((i) => i.problem).join(' / ')}`, 'warn');
             appendLog(event.willRetry ? `↻ ${tag} フィードバックを添えて再生成します。` : `⏹ ${tag} 上限回数に達しました。ユーザーの確認が必要です。`, 'warn');
             break;
         case 'done':
             if (event.verdict === 'approved') {
-                appendLog(`✅ ${tag} 自己チェック合格（スコア ${event.score}/10、ドット絵らしさ ${event.pixelArtAuthenticity}/10）。`, 'ok');
+                appendLog(`✅ ${tag} 自己チェック合格（スコア ${event.score}/10、ドット絵らしさ ${event.pixelArtAuthenticity}/10、シェーディング ${event.shadingQuality}/10）。`, 'ok');
             } else if (event.verdict === 'skipped') {
                 appendLog('ℹ️ 自己チェックは無効化されています。');
             }
@@ -120,7 +120,7 @@ function flatTo2D(flat, width, height) {
 
 // ── 初期化 ──
 
-const initialProject = createEmptyProject({ width: 24, height: 24, frameCount: 6, fps: 8, loopMode: 'loop' });
+const initialProject = createEmptyProject({ width: 32, height: 32, frameCount: 6, fps: 8, loopMode: 'loop' });
 const store = new ProjectStore(initialProject);
 const editor = new PixelEditor(editCanvas, store);
 const animator = new Animator(playCanvas);
@@ -287,7 +287,7 @@ function summarizeResult(result) {
     const concept = result.concept ? `「${result.concept}」` : '';
     switch (result.verdict) {
         case 'approved':
-            return `✅ ${result.iterations}回の試行で自己チェックに合格しました（スコア${result.score}/10、ドット絵らしさ${result.pixelArtAuthenticity}/10）。${concept}`;
+            return `✅ ${result.iterations}回の試行で自己チェックに合格しました（スコア${result.score}/10、ドット絵らしさ${result.pixelArtAuthenticity}/10、シェーディング${result.shadingQuality}/10）。${concept}`;
         case 'approved-heuristic-only':
             return `✅ 機械的な品質チェックには合格しました（AIによる画像レビューは失敗のためスキップ）。${concept}`;
         case 'skipped':
