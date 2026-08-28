@@ -12,6 +12,9 @@ const COLOR_TARGET_RING := Color(0.08, 0.08, 0.1)
 const COLOR_CRATE_CAP := Color(0.55, 0.3, 0.05)
 const COLOR_ROBOT_HEAD := Color(0.85, 0.9, 0.95)
 const COLOR_ROBOT_EYE := Color(0.9, 0.95, 1.0)
+const COLOR_ELEVATOR_BASE := Color(0.3, 0.28, 0.15)
+const COLOR_ELEVATOR_PILLAR := Color(0.9, 0.7, 0.15)
+const COLOR_PORTAL_FRAME := Color(0.1, 0.08, 0.14)
 
 
 ## 単一のBoxMesh+単色マテリアルを持つMeshInstance3Dを生成する（親には追加しない）。
@@ -94,6 +97,54 @@ static func make_cargo_crate(size: float, color: Color) -> Dictionary:
 	)
 
 	return {"root": root, "primary_mesh": body_mesh}
+
+
+## エレベーターパッド: 濃色のベース + 四隅の縞模様ポール + 中央で明滅するランプ（呼び出し側でTween制御）。
+static func make_elevator_pad(size: float, color: Color) -> Dictionary:
+	var root := Node3D.new()
+	var base_height: float = size * 0.15
+	root.add_child(make_box(Vector3(size * 1.3, base_height, size * 1.3), COLOR_ELEVATOR_BASE, Vector3(0, base_height * 0.5, 0)))
+
+	var pillar_height: float = size * 0.6
+	var pillar_size: float = size * 0.12
+	var offset: float = size * 0.55
+	for corner in [Vector2(1, 1), Vector2(1, -1), Vector2(-1, 1), Vector2(-1, -1)]:
+		root.add_child(
+			make_box(
+				Vector3(pillar_size, pillar_height, pillar_size),
+				COLOR_ELEVATOR_PILLAR,
+				Vector3(corner.x * offset, base_height + pillar_height * 0.5, corner.y * offset)
+			)
+		)
+
+	var lamp_size: float = size * 0.22
+	var lamp_mesh := make_box(
+		Vector3(lamp_size, lamp_size, lamp_size), color, Vector3(0, base_height + pillar_height + lamp_size * 0.5, 0)
+	)
+	var mat: StandardMaterial3D = lamp_mesh.mesh.material
+	mat.emission_enabled = true
+	mat.emission = color
+	root.add_child(lamp_mesh)
+
+	return {"root": root, "primary_mesh": lamp_mesh}
+
+
+## ポータルパッド: 暗色のフレームベース + 縦に立つ発光ディスク（呼び出し側で回転・パルスをTween制御）。
+static func make_portal_pad(size: float, color: Color) -> Dictionary:
+	var root := Node3D.new()
+	var base_height: float = size * 0.1
+	root.add_child(make_box(Vector3(size * 1.2, base_height, size * 1.2), COLOR_PORTAL_FRAME, Vector3(0, base_height * 0.5, 0)))
+
+	var disc_height: float = size * 0.9
+	var disc_mesh := make_box(
+		Vector3(size * 0.75, disc_height, size * 0.12), color, Vector3(0, base_height + disc_height * 0.5, 0)
+	)
+	var mat: StandardMaterial3D = disc_mesh.mesh.material
+	mat.emission_enabled = true
+	mat.emission = color
+	root.add_child(disc_mesh)
+
+	return {"root": root, "primary_mesh": disc_mesh}
 
 
 ## プレイヤー: 胴体 + 頭 + 前面の目(発光)の簡易ロボット。目の向きで移動方向を表現する。

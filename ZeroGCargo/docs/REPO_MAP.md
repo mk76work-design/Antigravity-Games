@@ -8,22 +8,25 @@
 ## `scripts/core/cargo_board.gd` — `class_name CargoBoard extends RefCounted`
 Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=行）。
 床は「高さ（段差）」を持てる: プレイヤーは1段差までなら昇り降り可能、カーゴは同じ高さの床同士でしか押し出せない。
+エレベーター/ポータルは「2マスをペアで結ぶワープタイル」として実装し、両者は表示テーマ以外はロジック上同じ仕組み。
 
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
 | 定数 | `UP/DOWN/LEFT/RIGHT: Vector2i` | 移動方向 |
-| `from_layout` | `static (layout: PackedStringArray) -> CargoBoard` | ASCIIレイアウトから盤面を構築（`'1'`〜`'9'`は床の高さ） |
-| `is_wall` / `is_box` / `is_target` | `(pos: Vector2i) -> bool` | セル種別判定 |
+| 定数 | `WARP_TYPE_ELEVATOR / WARP_TYPE_PORTAL: String` | `get_warp_type()`の戻り値・表示テーマの判定に使用 |
+| `from_layout` | `static (layout: PackedStringArray) -> CargoBoard` | ASCIIレイアウトから盤面を構築（`'1'`〜`'9'`は床の高さ、`'E'`/`'T'`はワープペア） |
+| `is_wall` / `is_box` / `is_target` / `is_warp` | `(pos: Vector2i) -> bool` | セル種別判定 |
 | `get_height` | `(pos: Vector2i) -> int` | 指定マスの高さ（未指定なら0） |
+| `get_warp_type` | `(pos: Vector2i) -> String` | ワープでなければ空文字列 |
 | `get_player_position` | `() -> Vector2i` | |
-| `get_box_positions` / `get_target_positions` | `() -> Array` | |
-| `move` | `(direction: Vector2i) -> bool` | 移動・押し出しを試行（高さ制約含む）。成功時true |
+| `get_box_positions` / `get_target_positions` / `get_warp_positions` | `() -> Array` | |
+| `move` | `(direction: Vector2i) -> bool` | 移動・押し出しを試行（高さ・ワープ制約含む）。成功時true |
 | `is_cleared` | `() -> bool` | 全カーゴが目標パッド上か |
 
 ## `scripts/core/level_data.gd` — `class_name LevelData extends RefCounted`
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
-| `LEVELS` | `static var Array[PackedStringArray]` | 6レベル分のレイアウト（Lv6は高低差ギミック）。`const`にすると4.3のエンジン不具合でクラッシュするため`static var` |
+| `LEVELS` | `static var Array[PackedStringArray]` | 8レベル分のレイアウト（Lv6=高低差、Lv7=エレベーター、Lv8=ポータル）。`const`にすると4.3のエンジン不具合でクラッシュするため`static var` |
 | `get_level_count` | `static () -> int` | |
 | `get_level` | `static (index: int) -> PackedStringArray` | |
 
@@ -42,10 +45,12 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 
 | メンバ | シグネチャ | 説明 |
 |--------|-----------|------|
-| `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（チェッカー床・壁・発光目標・カーゴ・プレイヤー・段差ライザー） |
-| `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新、着地時にスクイーズ演出。プレイヤーは移動方向へ`look_at`で向きを変える |
+| `load_level` | `(board: CargoBoard) -> void` | レベル読込時に一度だけ全体を構築（チェッカー床・壁・発光目標・ワープパッド・カーゴ・プレイヤー・段差ライザー） |
+| `sync` | `(board: CargoBoard) -> void` | 移動後の差分（プレイヤー位置・移動したカーゴ1個）だけをTweenで補間更新、着地時にスクイーズ演出。プレイヤーは移動方向へ`look_at`で向きを変える。移動距離が1マスを超える場合はワープ転送とみなし縮小/拡大の瞬間移動演出にする |
 | `_elevation` | `(board: CargoBoard, pos: Vector2i) -> float` | `CargoBoard.get_height()`をワールドY座標オフセットに変換（`HEIGHT_STEP`倍） |
 | `_add_elevation_risers` | `(board: CargoBoard) -> void` | 高さの異なる床が隣接する境界に段差の側面（ライザー）を配置 |
+| `_add_warp_marker` | `(board: CargoBoard, warp_pos: Vector2i) -> void` | `get_warp_type()`に応じてエレベーター/ポータルパッドを生成し、明滅（+ポータルは自転）をTweenでループ |
+| `_tween_player_warp` | `(destination: Vector3) -> void` | プレイヤーを縮小→位置差し替え→拡大復元する瞬間移動演出 |
 | シグナル | `box_landed_on_target` | カーゴが目標パッドに乗った瞬間に発火（main.gdの画面振動トリガー） |
 
 ## `scripts/nodes/primitive_shapes.gd` — `class_name PrimitiveShapes extends RefCounted`
@@ -59,6 +64,8 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 | `make_floor` | `(cell_size, floor_height, base_color, inset_color) -> Node3D` | ベース+インセットパネルの床タイル |
 | `make_target_pad` | `(size, height, color) -> Dictionary` | リング状ベース+パルス発光するパッド本体 |
 | `make_cargo_crate` | `(size, color) -> Dictionary` | 本体+蓋(キャップ)のコンテナ風カーゴ |
+| `make_elevator_pad` | `(size, color) -> Dictionary` | 濃色ベース+四隅の縞ポール+中央の明滅ランプ |
+| `make_portal_pad` | `(size, color) -> Dictionary` | 暗色フレーム+縦に立つ発光ディスク（呼び出し側で自転させる） |
 | `make_player_robot` | `(size, color) -> Node3D` | 胴体+頭+前面の発光する目の簡易ロボット |
 
 ## `scripts/nodes/player_controller.gd` — `class_name PlayerController extends Node`
@@ -88,4 +95,5 @@ Node非依存の盤面ロジック。座標系は `Vector2i(x, y)`（x=列, y=�
 | `test_cargo_board_move.gd` | 床への移動、壁での停止 |
 | `test_cargo_board_push.gd` | カーゴの押し出し、壁/別カーゴによる押し出し失敗 |
 | `test_cargo_board_height.gd` | 1段差の昇り降り、2段差以上の移動禁止、高さの異なる床へのカーゴ押し出し禁止 |
-| `test_cargo_board_win_condition.gd` | クリア判定、**全6レベルの検証済み手順によるクリア可能性**（Lv6は高低差ギミック） |
+| `test_cargo_board_warp.gd` | エレベーター/ポータルへの転送、ワープ種別判定、カーゴのワープ通過禁止 |
+| `test_cargo_board_win_condition.gd` | クリア判定、**全8レベルの検証済み手順によるクリア可能性**（Lv6=高低差、Lv7=エレベーター、Lv8=ポータル） |

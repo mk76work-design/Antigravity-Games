@@ -25,6 +25,12 @@ const SQUASH_DURATION := 0.08
 const TARGET_PULSE_DURATION := 0.9
 const TARGET_PULSE_MIN_ENERGY := 0.4
 const TARGET_PULSE_MAX_ENERGY := 1.6
+const WARP_PULSE_DURATION := 0.6
+const WARP_PULSE_MIN_ENERGY := 0.6
+const WARP_PULSE_MAX_ENERGY := 2.0
+const PORTAL_SPIN_DURATION := 2.0
+const WARP_TELEPORT_SHRINK_DURATION := 0.1
+const WARP_TELEPORT_GROW_DURATION := 0.14
 
 const COLOR_FLOOR_A := Color(0.22, 0.22, 0.26)
 const COLOR_FLOOR_A_INSET := Color(0.27, 0.27, 0.32)
@@ -36,12 +42,14 @@ const COLOR_BOX_ON_TARGET := Color(0.25, 0.85, 0.35)
 const COLOR_TARGET := Color(0.2, 0.75, 0.4)
 const COLOR_PLAYER := Color(0.2, 0.55, 1.0)
 const COLOR_RISER := Color(0.15, 0.15, 0.19)
+const COLOR_ELEVATOR := Color(1.0, 0.75, 0.1)
+const COLOR_PORTAL := Color(0.7, 0.25, 0.95)
 
 var _static_root: Node3D = null
 var _player_mesh: Node3D = null
 var _player_grid_pos: Vector2i = Vector2i.ZERO
 var _box_meshes: Dictionary = {}  # Vector2i(現在位置) -> Node3D(カーゴのroot)
-var _target_pulse_tweens: Array = []
+var _looping_tweens: Array = []
 
 
 ## レベル読込時に一度だけ呼ぶ。床・壁・目標パッドを含め全て再構築する。
@@ -70,6 +78,9 @@ func load_level(board: CargoBoard) -> void:
 	for target_pos in board.get_target_positions():
 		_add_target_marker(board, target_pos)
 
+	for warp_pos in board.get_warp_positions():
+		_add_warp_marker(board, warp_pos)
+
 	for box_pos in board.get_box_positions():
 		var color: Color = COLOR_BOX_ON_TARGET if board.is_target(box_pos) else COLOR_BOX
 		var built: Dictionary = PrimitiveShapes.make_cargo_crate(BOX_SIZE, color)
@@ -90,9 +101,14 @@ func sync(board: CargoBoard) -> void:
 	var new_player_pos: Vector2i = board.get_player_position()
 	if new_player_pos != _player_grid_pos:
 		var delta: Vector2i = new_player_pos - _player_grid_pos
-		_player_mesh.look_at(_player_mesh.global_position + Vector3(delta.x, 0.0, delta.y), Vector3.UP)
+		var is_warp_jump: bool = absi(delta.x) + absi(delta.y) > 1
 		_player_grid_pos = new_player_pos
-		_tween_to(_player_mesh, _grid_to_world(new_player_pos, FLOOR_TOP + _elevation(board, new_player_pos)))
+		var destination: Vector3 = _grid_to_world(new_player_pos, FLOOR_TOP + _elevation(board, new_player_pos))
+		if is_warp_jump:
+			_tween_player_warp(destination)
+		else:
+			_player_mesh.look_at(_player_mesh.global_position + Vector3(delta.x, 0.0, delta.y), Vector3.UP)
+			_tween_to(_player_mesh, destination)
 
 	var new_box_positions: Array = board.get_box_positions()
 	var new_box_set: Dictionary = {}
@@ -125,6 +141,14 @@ func _tween_to(node: Node3D, target_position: Vector3) -> void:
 	tween.tween_property(node, "position", target_position, MOVE_TWEEN_DURATION)
 
 
+## エレベーター/ポータルによる転送用: その場で縮小 -> 位置を差し替え -> 拡大復元する「瞬間移動」演出。
+func _tween_player_warp(destination: Vector3) -> void:
+	var tween := create_tween()
+	tween.tween_property(_player_mesh, "scale", Vector3(0.05, 0.05, 0.05), WARP_TELEPORT_SHRINK_DURATION)
+	tween.tween_callback(func() -> void: _player_mesh.position = destination)
+	tween.tween_property(_player_mesh, "scale", Vector3.ONE, WARP_TELEPORT_GROW_DURATION)
+
+
 ## 押し出されたカーゴ用: 移動と同時に進行方向へスクイーズ→復元する（G-1: 発生→フォロースルー）。
 func _tween_box_move(node: Node3D, target_position: Vector3) -> void:
 	var tween := create_tween()
@@ -141,10 +165,10 @@ func _set_box_color(root: Node3D, color: Color) -> void:
 
 
 func _clear() -> void:
-	for tween in _target_pulse_tweens:
+	for tween in _looping_tweens:
 		if is_instance_valid(tween):
 			tween.kill()
-	_target_pulse_tweens.clear()
+	_looping_tweens.clear()
 	if _static_root != null:
 		_static_root.queue_free()
 		_static_root = null
@@ -218,4 +242,36 @@ func _add_target_marker(board: CargoBoard, target_pos: Vector2i) -> void:
 	tween.set_loops()
 	tween.tween_property(mat, "emission_energy_multiplier", TARGET_PULSE_MAX_ENERGY, TARGET_PULSE_DURATION)
 	tween.tween_property(mat, "emission_energy_multiplier", TARGET_PULSE_MIN_ENERGY, TARGET_PULSE_DURATION)
-	_target_pulse_tweens.append(tween)
+	_looping_tweens.append(tween)
+
+
+## エレベーター/ポータルパッドを生成する。エレベーターはランプの明滅、
+## ポータルは明滅に加えてディスクの自転アニメーションを付与する。
+func _add_warp_marker(board: CargoBoard, warp_pos: Vector2i) -> void:
+	var warp_type: String = board.get_warp_type(warp_pos)
+	var built: Dictionary
+	if warp_type == CargoBoard.WARP_TYPE_PORTAL:
+		built = PrimitiveShapes.make_portal_pad(TARGET_SIZE, COLOR_PORTAL)
+	else:
+		built = PrimitiveShapes.make_elevator_pad(TARGET_SIZE, COLOR_ELEVATOR)
+
+	var root: Node3D = built["root"]
+	var primary_mesh: MeshInstance3D = built["primary_mesh"]
+	root.position = _grid_to_world(warp_pos, FLOOR_TOP + _elevation(board, warp_pos))
+	_static_root.add_child(root)
+
+	var box_mesh: BoxMesh = primary_mesh.mesh
+	var mat: StandardMaterial3D = box_mesh.material
+	mat.emission_energy_multiplier = WARP_PULSE_MIN_ENERGY
+
+	var pulse_tween := create_tween()
+	pulse_tween.set_loops()
+	pulse_tween.tween_property(mat, "emission_energy_multiplier", WARP_PULSE_MAX_ENERGY, WARP_PULSE_DURATION)
+	pulse_tween.tween_property(mat, "emission_energy_multiplier", WARP_PULSE_MIN_ENERGY, WARP_PULSE_DURATION)
+	_looping_tweens.append(pulse_tween)
+
+	if warp_type == CargoBoard.WARP_TYPE_PORTAL:
+		var spin_tween := create_tween()
+		spin_tween.set_loops()
+		spin_tween.tween_property(primary_mesh, "rotation:y", TAU, PORTAL_SPIN_DURATION).as_relative()
+		_looping_tweens.append(spin_tween)
