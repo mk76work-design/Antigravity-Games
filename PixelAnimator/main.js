@@ -120,7 +120,7 @@ function flatTo2D(flat, width, height) {
 
 // ── 初期化 ──
 
-const initialProject = createEmptyProject({ width: 32, height: 32, frameCount: 6, fps: 8, loopMode: 'loop' });
+const initialProject = createEmptyProject({ width: 16, height: 16, frameCount: 6, fps: 8, loopMode: 'loop' });
 const store = new ProjectStore(initialProject);
 const editor = new PixelEditor(editCanvas, store);
 const animator = new Animator(playCanvas);

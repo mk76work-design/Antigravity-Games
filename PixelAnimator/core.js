@@ -13,7 +13,11 @@
 import { runHeuristicChecks } from './qa.js';
 
 export const DEFAULT_MODEL = 'claude-sonnet-5';
-export const DEFAULT_MAX_ITERATIONS = 3;
+// 「完璧な自動承認」を目指して3回転フルに回すと実機で時間がかかりすぎることが
+// 分かったため、デフォルトは控えめな2回に抑える。もともとの設計思想
+//（AIは自己チェック、人間は軽い手直し・確認だけ）に立ち返り、自動収束しなくても
+// 最初のドラフト＋1回の修正までで打ち切り、残りは人間/エージェントの軽い手直しに委ねる。
+export const DEFAULT_MAX_ITERATIONS = 2;
 
 // ドット絵の「品質」を左右する演出ルール。
 // Documents/Sakurai_Knowledge/F_Graphics.md の思想（光と影の重視・視認性優先・
@@ -156,6 +160,56 @@ export function buildSingleFrameToolSchema(width, height) {
     };
 }
 
+// refineAnimation()は修正のたびに全フレームの全ピクセルを再送信・再出力させるため、
+// キャンバスが大きい・フレーム数が多いほどペイロードが線形以上に膨らみ、実機で
+// CLIタイムアウトの原因になることが分かった。批評（critiqueAnimation）が問題箇所を
+// 特定フレームに絞れた場合、そのフレームだけを送受信して直させるための専用スキーマ。
+export function buildPartialRefineToolSchema(width, height, targetFrameNumbers) {
+    return {
+        name: 'emit_frame_fixes',
+        description: `指定されたフレームだけを修正し、修正後のピクセルグリッドを出力する。対象フレーム番号: ${targetFrameNumbers.join(', ')}（他のフレームは変更しないので出力不要）。`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                frames: {
+                    type: 'array',
+                    description: `修正した各フレーム。ちょうど ${targetFrameNumbers.length} 個、対象フレーム番号（${targetFrameNumbers.join(', ')}）を過不足なく含めること。`,
+                    minItems: targetFrameNumbers.length,
+                    maxItems: targetFrameNumbers.length,
+                    items: {
+                        type: 'object',
+                        properties: {
+                            frameNumber: {
+                                type: 'integer',
+                                description: `修正したフレームの番号（1始まり）。対象（${targetFrameNumbers.join(', ')}）のいずれか。`,
+                            },
+                            pixels: {
+                                type: 'array',
+                                description: `高さ ${height} × 幅 ${width} の2次元配列。既存パレットのインデックス（0始まり）、透明なら -1。`,
+                                minItems: height,
+                                maxItems: height,
+                                items: {
+                                    type: 'array',
+                                    minItems: width,
+                                    maxItems: width,
+                                    items: { type: 'integer', minimum: -1 },
+                                },
+                            },
+                        },
+                        required: ['frameNumber', 'pixels'],
+                    },
+                },
+                paletteAdditions: {
+                    type: 'array',
+                    description: 'どうしても既存パレットで表現できない場合のみ、新規追加する色を#rrggbb形式で列挙する（不要なら空配列）。',
+                    items: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
+                },
+            },
+            required: ['frames'],
+        },
+    };
+}
+
 export function buildCritiqueToolSchema() {
     return {
         name: 'emit_critique',
@@ -194,6 +248,11 @@ export function buildCritiqueToolSchema() {
                         properties: {
                             problem: { type: 'string', description: '見つかった具体的な問題。' },
                             suggestion: { type: 'string', description: 'どう直すべきかの具体的な指示。' },
+                            frameIndices: {
+                                type: 'array',
+                                description: 'この問題が実際に見えるフレーム番号（1始まり）のリスト。特定の数枚だけに絞れる場合は必ず指定すること（修正コストを大きく下げられるため）。パレット全体の問題・全フレーム共通の問題など、特定のフレームに絞れない場合のみ省略するか空配列にする。',
+                                items: { type: 'integer', minimum: 1 },
+                            },
                         },
                         required: ['problem', 'suggestion'],
                     },
@@ -340,6 +399,98 @@ ${issuesText}
     return parseAnimationResult(result, { width, height, frameCount, paletteLimit });
 }
 
+// refineAnimation()の軽量版。批評で問題箇所が特定フレームに絞れた場合、その対象
+// フレーム（＋直接の前後フレームを参考として）だけを送受信し、対象外のフレームは
+// 一切送らず・出力もさせない。全フレーム再送信よりプロンプト・応答とも大幅に小さくなる
+// ため速いはずだが、フレームをまたぐ一貫性の修正（重心ズレ等）には不向きなので、
+// 呼び出し側（generateWithSelfCheck）は「全issueがframeIndicesを持ち、対象が全体の
+// 一部」の場合のみこちらを使い、それ以外は素直にrefineAnimation()にフォールバックする。
+export async function refinePartial({ description, width, height, frameCount, paletteLimit, loopMode, palette, frames, targetFrameNumbers, issues, callClaude }) {
+    const tool = buildPartialRefineToolSchema(width, height, targetFrameNumbers);
+    const paletteText = palette.map((hex, i) => `${i}: ${hex}`).join(', ');
+    const targetSet = new Set(targetFrameNumbers);
+
+    const gridText = (flat) => {
+        const rows = [];
+        for (let y = 0; y < height; y++) rows.push(flat.slice(y * width, (y + 1) * width));
+        return JSON.stringify(rows);
+    };
+
+    // 対象フレームの現状データに加え、直接の前後フレーム（対象外のもの）は
+    // 「変更しないでほしい参考情報」として軽く見せ、動きの連続性の手がかりにする。
+    const contextIndices = new Set();
+    for (const n of targetFrameNumbers) {
+        if (n - 2 >= 0) contextIndices.add(n - 2);
+        if (n < frameCount) contextIndices.add(n);
+    }
+    for (const n of targetFrameNumbers) contextIndices.delete(n - 1);
+
+    const targetFramesText = targetFrameNumbers
+        .map((n) => `フレーム${n}（修正対象）:\n${gridText(frames[n - 1])}`)
+        .join('\n\n');
+    const contextFramesText = [...contextIndices]
+        .sort((a, b) => a - b)
+        .map((idx) => `フレーム${idx + 1}（参考・変更しないこと）:\n${gridText(frames[idx])}`)
+        .join('\n\n');
+
+    const issuesText = issues.map((s, i) => `${i + 1}. ${s}`).join('\n');
+
+    const userText = `${STYLE_GUIDE}
+
+# 元の発注内容
+${description}
+
+# 仕様
+- キャンバスサイズ: 幅 ${width}px × 高さ ${height}px
+- フレーム数（全体）: ちょうど ${frameCount} 枚（今回はこのうち一部だけを修正する）
+- パレット上限: ${paletteLimit} 色
+
+# 現在のパレット（インデックス: 色）
+${paletteText}
+
+# 修正対象フレーム（実際のピクセルデータ。0始まりのpalette index、透明は-1）
+${targetFramesText}
+
+${contextFramesText ? `# 参考: 前後フレーム（変更しないこと）\n${contextFramesText}\n` : ''}
+# 修正すべき問題点
+${issuesText}
+
+上記の修正対象フレーム（${targetFrameNumbers.join(', ')}）だけをピクセル単位で修正してください。
+- 対象外のフレームは一切出力しないこと（他のフレームは変更されない前提で進める）。
+- 問題点に関係しないピクセルはできる限りそのまま維持すること（無関係な描き直しはしない）。
+- パレットも基本的にそのまま使うこと。どうしても必要な場合のみ新しい色を追加してよい（上限 ${paletteLimit} 色）。
+- 参考として示した前後フレームとの動きの連続性（重心・輪郭・影の変化）を保つこと。
+- emit_frame_fixes ツールで、対象フレーム番号（${targetFrameNumbers.join(', ')}）ちょうど分だけ出力すること。`;
+
+    const result = await callClaude({ system: STYLE_GUIDE, userText, tool, maxTokens: 8000 });
+
+    if (!Array.isArray(result.frames) || result.frames.length !== targetFrameNumbers.length) {
+        throw new Error(`部分修正の応答フレーム数が対象数（${targetFrameNumbers.length}）と一致しません。`);
+    }
+
+    let updatedPalette = palette;
+    if (Array.isArray(result.paletteAdditions) && result.paletteAdditions.length > 0) {
+        updatedPalette = palette.concat(result.paletteAdditions).slice(0, paletteLimit);
+    }
+
+    const updatedFrames = frames.slice();
+    const seen = new Set();
+    for (const entry of result.frames) {
+        const n = entry.frameNumber;
+        if (!targetSet.has(n)) {
+            throw new Error(`部分修正の応答に対象外のフレーム番号 ${n} が含まれています。`);
+        }
+        seen.add(n);
+        validateGrid(entry.pixels, width, height, updatedPalette.length, `フレーム${n}`);
+        updatedFrames[n - 1] = flattenGrid(entry.pixels, width, height);
+    }
+    if (seen.size !== targetSet.size) {
+        throw new Error('部分修正の応答が対象フレームの一部しかカバーしていません。');
+    }
+
+    return { palette: updatedPalette, frames: updatedFrames, concept: undefined };
+}
+
 export async function regenerateFrame({ description, width, height, palette, neighborFrames, frameIndex, callClaude }) {
     const tool = buildSingleFrameToolSchema(width, height);
 
@@ -400,6 +551,12 @@ ${description}
 - フレーム間で同一モチーフとして一貫しているか（プロポーションや位置が破綻していないか）
 - 指定された色数・配色の範囲内で読みやすいか
 
+**各issueについて、問題が見えるフレーム番号（左から1始まり）を可能な限り frameIndices に
+指定してください。** 特定の数枚だけの問題（例: 「フレーム3で腕の輪郭が崩れている」）を
+全フレーム再生成の理由にしないための情報です。パレット全体の色使いの問題や、全フレーム
+に共通する問題（例:「輪郭線が全体的に黒一色べったり」）の場合のみ frameIndices を省略・
+空配列にしてください。
+
 emit_critique ツールで採点結果を返してください。`,
         },
         {
@@ -459,12 +616,30 @@ export async function generateWithSelfCheck({
 }) {
     let priorResult = null;
     let issuesToFix = null;
+    let targetFrameNumbers = null;
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
-        onProgress({ type: 'generating', iteration, maxIterations });
+        onProgress({ type: 'generating', iteration, maxIterations, mode: targetFrameNumbers ? 'partial-refine' : (priorResult && issuesToFix ? 'refine' : 'generate'), targetFrameNumbers: targetFrameNumbers || undefined });
 
-        const result = priorResult && issuesToFix
-            ? await refineAnimation({
+        let result;
+        if (priorResult && issuesToFix && targetFrameNumbers) {
+            result = await refinePartial({
+                description,
+                width,
+                height,
+                frameCount,
+                paletteLimit,
+                loopMode,
+                palette: priorResult.palette,
+                frames: priorResult.frames,
+                targetFrameNumbers,
+                issues: issuesToFix,
+                callClaude,
+            });
+            // refinePartialはコンセプト説明を再生成しないため、直前の説明文を引き継ぐ。
+            result.concept = priorResult.concept;
+        } else if (priorResult && issuesToFix) {
+            result = await refineAnimation({
                 description,
                 width,
                 height,
@@ -475,8 +650,10 @@ export async function generateWithSelfCheck({
                 frames: priorResult.frames,
                 issues: issuesToFix,
                 callClaude,
-            })
-            : await generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, reference, callClaude });
+            });
+        } else {
+            result = await generateAnimation({ description, width, height, frameCount, paletteLimit, loopMode, reference, callClaude });
+        }
 
         priorResult = result;
         const project = { width, height, fps: 8, loopMode, palette: result.palette, frames: result.frames };
@@ -494,6 +671,10 @@ export async function generateWithSelfCheck({
             onProgress({ type: 'heuristic-failed', iteration, maxIterations, issues: heuristicIssues, willRetry: !isLast });
             if (!isLast) {
                 issuesToFix = heuristicIssues;
+                // ヒューリスティックの指摘（例:「フレーム3と4がほぼ同一」）はフレーム間の
+                // 関係そのものを問題にしていることが多く、対象を安全に絞れないため、
+                // 常に全フレーム修正（refineAnimation）にフォールバックする。
+                targetFrameNumbers = null;
                 continue;
             }
             return { ...base, verdict: 'needs_review', reasons: heuristicIssues };
@@ -521,6 +702,17 @@ export async function generateWithSelfCheck({
         onProgress({ type: 'vision-needs-fix', iteration, maxIterations, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality, issues: critique.issues, willRetry: !isLast });
         if (!isLast) {
             issuesToFix = reasons;
+            // 全issueがframeIndicesを持ち、対象が全体の一部に絞れる場合だけ部分修正
+            // （refinePartial）を使う。1件でもframeIndices不明・全フレーム対象なら、
+            // 安全に全フレーム修正（refineAnimation）へフォールバックする。
+            const allScoped = critique.issues.length > 0
+                && critique.issues.every((i) => Array.isArray(i.frameIndices) && i.frameIndices.length > 0);
+            const scopedNumbers = allScoped
+                ? [...new Set(critique.issues.flatMap((i) => i.frameIndices))]
+                    .filter((n) => Number.isInteger(n) && n >= 1 && n <= frameCount)
+                    .sort((a, b) => a - b)
+                : [];
+            targetFrameNumbers = (scopedNumbers.length > 0 && scopedNumbers.length < frameCount) ? scopedNumbers : null;
             continue;
         }
         return { ...base, verdict: 'needs_review', reasons, score: critique.score, pixelArtAuthenticity: critique.pixelArtAuthenticity, shadingQuality: critique.shadingQuality };

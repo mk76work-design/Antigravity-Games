@@ -45,8 +45,9 @@ function printUsage() {
 オプション:
   --prompt <text>              必須。どんなアニメーションが欲しいかの説明。
   --out <path>                 必須。出力ファイルの接頭辞。
-  --width <px>                 キャンバス幅（デフォルト 32。スーパーファミコン級の
-                                 密度のシェーディングを狙うなら32px以上を推奨）
+  --width <px>                 キャンバス幅（デフォルト 16。小さく始めて速く回すための
+                                 デフォルト。スーパーファミコン級の密度を狙うなら
+                                 32px以上を指定できるが、生成・修正が大幅に重くなる点に注意）
   --height <px>                キャンバス高さ（デフォルト --width と同じ）
   --frames <n>                 フレーム数（デフォルト 6）
   --palette <n>                パレット上限色数（デフォルト 16。主要パーツごとに
@@ -58,11 +59,17 @@ function printUsage() {
   --no-self-check               自己チェックを無効化し、1回の生成だけで終了する
   --quiet                       進行状況ログ(stderr)を抑制する
 
-例:
+例（デフォルトの16pxで小さく速く試す）:
+  node cli.js generate \\
+    --prompt "剣を構えた侍が待機して時々まばたきする、青系の配色" \\
+    --frames 8 --loop loop \\
+    --out ./output/samurai_idle
+
+例（SNES級の密度を狙う。生成・修正が大幅に重くなる点に注意）:
   node cli.js generate \\
     --prompt "剣を構えた侍が待機して時々まばたきする、青系の配色" \\
     --width 32 --frames 8 --loop loop \\
-    --out ./output/samurai_idle
+    --out ./output/samurai_idle_hq
 
 --- character ---
 まず基準ポーズ（1枚絵）を生成し、それを土台に複数アクションのアニメーションを
@@ -81,11 +88,10 @@ function printUsage() {
   --width / --height / --palette / --loop / --fps / --model / --max-iterations /
   --no-self-check / --quiet     generate と同じ（全アクションに共通適用）。
 
-例:
+例（デフォルトの16pxで小さく速く試す）:
   node cli.js character \\
     --description "青い甲冑を着た戦士、赤いマント" \\
     --actions idle,walk,attack --frames 4,8,6 \\
-    --width 32 --palette 16 \\
     --out-dir ./output/warrior
 `);
 }
@@ -95,9 +101,11 @@ function buildOnProgress({ quiet, logPrefix = '' }) {
     return (event) => {
         const tag = `${logPrefix}[${event.iteration}/${event.maxIterations}]`;
         switch (event.type) {
-            case 'generating':
-                log(`🪄 ${tag} 生成中...`);
+            case 'generating': {
+                const modeLabel = { generate: '新規生成', refine: '全フレーム修正', 'partial-refine': `部分修正(フレーム${(event.targetFrameNumbers || []).join(',')}のみ)` }[event.mode] || '生成';
+                log(`🪄 ${tag} ${modeLabel}中...`);
                 break;
+            }
             case 'heuristic-checking':
                 log(`🔍 ${tag} 機械的な品質チェック中...`);
                 break;
@@ -180,7 +188,7 @@ async function runGenerateCommand(rest) {
             options: {
                 prompt: { type: 'string' },
                 out: { type: 'string' },
-                width: { type: 'string', default: '32' },
+                width: { type: 'string', default: '16' },
                 height: { type: 'string' },
                 frames: { type: 'string', default: '6' },
                 palette: { type: 'string', default: '16' },
@@ -277,7 +285,7 @@ async function runCharacterCommand(rest) {
                 description: { type: 'string' },
                 actions: { type: 'string' },
                 'out-dir': { type: 'string' },
-                width: { type: 'string', default: '32' },
+                width: { type: 'string', default: '16' },
                 height: { type: 'string' },
                 frames: { type: 'string', default: '6' },
                 palette: { type: 'string', default: '16' },

@@ -29,9 +29,9 @@
                     <div class="field">
                         <label class="field-label" for="sizeSelect">キャンバスサイズ</label>
                         <select id="sizeSelect">
-                            <option value="16">16 × 16</option>
+                            <option value="16" selected>16 × 16</option>
                             <option value="24">24 × 24</option>
-                            <option value="32" selected>32 × 32</option>
+                            <option value="32">32 × 32</option>
                             <option value="48">48 × 48</option>
                         </select>
                     </div>
@@ -132,7 +132,7 @@
                 自己チェック・自動修正を有効にする（推奨）
             </label>
             <label class="field-label" for="maxIterationsInput">最大やり直し回数（これを超えたら人の確認に委ねる）</label>
-            <input id="maxIterationsInput" type="number" min="1" max="5" value="3">
+            <input id="maxIterationsInput" type="number" min="1" max="5" value="2">
 
             <div class="dialog-actions">
                 <button id="checkCliBtn" type="button" class="secondary-btn">CLI接続を確認</button>
